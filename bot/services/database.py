@@ -1,4 +1,4 @@
-from supabase import create_client, Client
+from supabase._sync.client import create_client
 from typing import Optional, Dict, Any, List
 import logging
 from datetime import datetime
@@ -8,7 +8,9 @@ logger = logging.getLogger(__name__)
 
 class DatabaseService:
     def __init__(self):
-        self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
+        if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+            raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be set and not None")
+        self.supabase = create_client(str(SUPABASE_URL), str(SUPABASE_ANON_KEY))
     
     async def get_or_create_user(self, telegram_id: int, username: Optional[str] = None, 
                                 language_code: str = "en", platform: str = "telegram") -> Dict[str, Any]:
@@ -207,4 +209,4 @@ class DatabaseService:
             
         except Exception as e:
             logger.error(f"Error in log_audit: {e}")
-            raise 
+            raise

@@ -1,10 +1,15 @@
 import asyncio
 import logging
+import os
+print("ENV:", dict(os.environ))
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from bot.config import BOT_TOKEN, BOT_VERSION
 from bot.services.database import DatabaseService
 from bot.services.flight_service import FlightService
+from bot.services.language_service import LanguageService
+from bot.services.typing_service import TypingService
+from bot.services.search_service import SearchService
 from bot.handlers import start, text, callbacks
 
 # Configure logging
@@ -19,8 +24,7 @@ async def main():
     try:
         # Initialize bot and dispatcher
         bot = Bot(
-            token=BOT_TOKEN,
-            parse_mode="HTML"
+            token=BOT_TOKEN
         )
         
         # Use memory storage for FSM
@@ -30,10 +34,16 @@ async def main():
         # Initialize services
         db_service = DatabaseService()
         flight_service = FlightService()
+        language_service = LanguageService()
+        typing_service = TypingService(bot)
+        search_service = SearchService()
         
         # Register dependency injection
         dp["db"] = db_service
         dp["flight_service"] = flight_service
+        dp["language_service"] = language_service
+        dp["typing_service"] = typing_service
+        dp["search_service"] = search_service
         
         # Include routers
         dp.include_router(start.router)

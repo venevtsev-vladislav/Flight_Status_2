@@ -4,16 +4,22 @@ from aiogram.fsm.context import FSMContext
 from datetime import datetime, timedelta
 from bot.services.database import DatabaseService
 from bot.services.flight_service import FlightService
+from bot.services.language_service import LanguageService
+from bot.services.typing_service import TypingService
+from bot.services.search_service import SearchService
 from bot.keyboards.inline_keyboards import (
     get_flight_card_keyboard, get_feature_request_keyboard, 
     get_user_flights_keyboard, get_empty_keyboard
 )
 from bot.config import CALLBACK_PREFIXES, MESSAGE_TEMPLATES, DEFAULT_LANGUAGE
+import asyncio
+from aiogram.types import InlineKeyboardMarkup
 
 router = Router()
 
 @router.callback_query(F.data.startswith(CALLBACK_PREFIXES["refresh"]))
-async def handle_refresh_flight(callback: CallbackQuery, db: DatabaseService, flight_service: FlightService):
+async def handle_refresh_flight(callback: CallbackQuery, db: DatabaseService, 
+                              flight_service: FlightService, typing_service: TypingService):
     """Handle refresh flight button"""
     try:
         flight_id = callback.data.replace(CALLBACK_PREFIXES["refresh"], "")
@@ -32,16 +38,22 @@ async def handle_refresh_flight(callback: CallbackQuery, db: DatabaseService, fl
         
         flight = flight_response.data[0]
         
-        # Get updated flight data
-        flight_data = await flight_service.get_flight_data(
-            flight['flight_number'], 
-            flight['date'], 
-            user['id']
+        # Show typing indicator while getting updated flight data
+        async def get_flight_data():
+            return await flight_service.get_flight_data(
+                flight['flight_number'], 
+                flight['date'], 
+                user['id']
+            )
+        
+        flight_data = await typing_service.show_typing_until(
+            callback.message.chat.id,
+            asyncio.create_task(get_flight_data())
         )
         
         # Format response
         lang = user.get('language_code', DEFAULT_LANGUAGE)
-        text = flight_data.get('message', '⚠️ Нет данных по рейсу.')
+        text = flight_data.get('message', MESSAGE_TEMPLATES["no_data_found"][lang])
         
         # Check subscription status
         is_subscribed = await db.is_subscribed(user['id'], flight_id)
@@ -49,10 +61,10 @@ async def handle_refresh_flight(callback: CallbackQuery, db: DatabaseService, fl
         
         # Update message
         await callback.message.edit_text(text, reply_markup=keyboard)
-        await callback.answer("Flight data updated!")
+        await callback.answer()
         
     except Exception as e:
-        await callback.answer("Error updating flight data")
+        await callback.answer("Error refreshing flight data")
         await db.log_audit(
             user_id=user['id'] if 'user' in locals() else None,
             action='refresh_flight_error',
@@ -74,13 +86,13 @@ async def handle_subscribe_flight(callback: CallbackQuery, db: DatabaseService):
         # Subscribe to flight
         await db.subscribe_to_flight(user['id'], flight_id)
         
-        # Update keyboard
+        # Update keyboard to show unsubscribe button
+        is_subscribed = True
         lang = user.get('language_code', DEFAULT_LANGUAGE)
-        keyboard = get_flight_card_keyboard(flight_id, True, lang)
+        keyboard = get_flight_card_keyboard(flight_id, is_subscribed, lang)
         
-        # Update message
         await callback.message.edit_reply_markup(reply_markup=keyboard)
-        await callback.answer("Subscribed to flight updates!")
+        await callback.answer("Subscribed to flight updates")
         
     except Exception as e:
         await callback.answer("Error subscribing to flight")
@@ -103,18 +115,15 @@ async def handle_unsubscribe_flight(callback: CallbackQuery, db: DatabaseService
         )
         
         # Unsubscribe from flight
-        success = await db.unsubscribe_from_flight(user['id'], flight_id)
+        await db.unsubscribe_from_flight(user['id'], flight_id)
         
-        if success:
-            # Update keyboard
-            lang = user.get('language_code', DEFAULT_LANGUAGE)
-            keyboard = get_flight_card_keyboard(flight_id, False, lang)
-            
-            # Update message
-            await callback.message.edit_reply_markup(reply_markup=keyboard)
-            await callback.answer("Unsubscribed from flight updates!")
-        else:
-            await callback.answer("Error unsubscribing from flight")
+        # Update keyboard to show subscribe button
+        is_subscribed = False
+        lang = user.get('language_code', DEFAULT_LANGUAGE)
+        keyboard = get_flight_card_keyboard(flight_id, is_subscribed, lang)
+        
+        await callback.message.edit_reply_markup(reply_markup=keyboard)
+        await callback.answer("Unsubscribed from flight updates")
         
     except Exception as e:
         await callback.answer("Error unsubscribing from flight")
@@ -160,30 +169,18 @@ async def handle_my_flights(callback: CallbackQuery, db: DatabaseService):
             username=callback.from_user.username
         )
         
-        # Get user's subscriptions
+        # Get user's subscribed flights
         subscriptions = await db.get_user_subscriptions(user['id'])
         
         if not subscriptions:
             lang = user.get('language_code', DEFAULT_LANGUAGE)
-            text = "You don't have any flight subscriptions yet."
-            if lang == "ru":
-                text = "У вас пока нет подписок на рейсы."
-            
-            await callback.message.edit_reply_markup(reply_markup=get_empty_keyboard())
+            text = "You don't have any subscribed flights yet."
             await callback.message.answer(text)
-            await callback.answer()
-            return
+        else:
+            # Create keyboard with user's flights
+            keyboard = get_user_flights_keyboard(subscriptions, user.get('language_code', DEFAULT_LANGUAGE))
+            await callback.message.edit_reply_markup(reply_markup=keyboard)
         
-        # Create keyboard with user's flights
-        lang = user.get('language_code', DEFAULT_LANGUAGE)
-        keyboard = get_user_flights_keyboard(subscriptions, lang)
-        
-        text = "Your flight subscriptions:"
-        if lang == "ru":
-            text = "Ваши подписки на рейсы:"
-        
-        # Update message
-        await callback.message.edit_text(text, reply_markup=keyboard)
         await callback.answer()
         
     except Exception as e:
@@ -194,25 +191,59 @@ async def handle_my_flights(callback: CallbackQuery, db: DatabaseService):
             details={'error': str(e)}
         )
 
-@router.callback_query(F.data.startswith(CALLBACK_PREFIXES["date_select"]))
-async def handle_date_selection(callback: CallbackQuery, db: DatabaseService, flight_service: FlightService):
-    """Handle date selection from keyboard"""
+@router.callback_query(F.data.startswith(CALLBACK_PREFIXES["feature_request"]))
+async def handle_feature_request(callback: CallbackQuery, db: DatabaseService):
+    """Handle feature request button"""
     try:
-        # Parse callback data: date:FLIGHT_NUMBER:DATE_TYPE
-        parts = callback.data.replace(CALLBACK_PREFIXES["date_select"], "").split(":")
-        if len(parts) != 2:
-            await callback.answer("Invalid date selection")
+        # Parse callback data: feature:FLIGHT_ID:FEATURE_CODE
+        data = callback.data.replace(CALLBACK_PREFIXES["feature_request"], "")
+        parts = data.split(":")
+        
+        if len(parts) < 2:
+            await callback.answer("Invalid feature request")
             return
         
-        flight_number, date_type = parts
+        flight_id = parts[0]
+        feature_code = parts[1]
+        
+        # Get user
+        user = await db.get_or_create_user(
+            telegram_id=callback.from_user.id,
+            username=callback.from_user.username
+        )
+        
+        # Save feature request
+        await db.save_feature_request(user['id'], feature_code, flight_id)
+        
+        await callback.answer("Feature request saved! We'll notify you when it's ready.")
+        
+    except Exception as e:
+        await callback.answer("Error saving feature request")
+        await db.log_audit(
+            user_id=user['id'] if 'user' in locals() else None,
+            action='feature_request_error',
+            details={'error': str(e), 'callback_data': callback.data}
+        )
+
+@router.callback_query(F.data.startswith(CALLBACK_PREFIXES["date_select"]))
+async def handle_date_selection(callback: CallbackQuery, db: DatabaseService, 
+                              flight_service: FlightService, typing_service: TypingService,
+                              search_service: SearchService):
+    """Handle date selection from keyboard"""
+    try:
+        # Parse callback data: date:DATE_TYPE (e.g., date:today, date:yesterday, date:tomorrow)
+        date_type = callback.data.replace(CALLBACK_PREFIXES["date_select"], "")
         
         # Convert date type to actual date
         if date_type == "yesterday":
             date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            date_display = (datetime.now() - timedelta(days=1)).strftime('%d.%m.%Y')
         elif date_type == "today":
             date = datetime.now().strftime('%Y-%m-%d')
+            date_display = datetime.now().strftime('%d.%m.%Y')
         elif date_type == "tomorrow":
             date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+            date_display = (datetime.now() + timedelta(days=1)).strftime('%d.%m.%Y')
         else:
             await callback.answer("Invalid date type")
             return
@@ -223,16 +254,27 @@ async def handle_date_selection(callback: CallbackQuery, db: DatabaseService, fl
             username=callback.from_user.username
         )
         
-        # Process the flight request
-        from bot.handlers.text import process_flight_request
-        await process_flight_request(
-            callback.message, flight_number, date, user, db, flight_service, 
-            user.get('language_code', DEFAULT_LANGUAGE)
+        # Save date to active search (this automatically sets state to waiting_for_number)
+        await search_service.update_search_with_date(
+            telegram_id=callback.from_user.id,
+            user_id=user['id'],
+            search_date=date,
+            parsed_data={'date': date, 'date_type': date_type}
         )
         
-        # Remove the date selection message
-        await callback.message.delete()
-        await callback.answer()
+        # Acknowledge the selection
+        lang = user.get('language_code', DEFAULT_LANGUAGE)
+        date_text = {
+            "yesterday": "вчера" if lang == "ru" else "yesterday",
+            "today": "сегодня" if lang == "ru" else "today", 
+            "tomorrow": "завтра" if lang == "ru" else "tomorrow"
+        }.get(date_type, date_type)
+        
+        await callback.answer(f"Selected date: {date_text}")
+        
+        # Send message with example format
+        text = f"Вы выбрали дату: {date_text} ({date_display})\n\nТеперь введите номер рейса:"
+        await callback.message.answer(text, parse_mode="Markdown")
         
     except Exception as e:
         await callback.answer("Error processing date selection")
@@ -242,58 +284,54 @@ async def handle_date_selection(callback: CallbackQuery, db: DatabaseService, fl
             details={'error': str(e), 'callback_data': callback.data}
         )
 
-@router.callback_query(F.data.startswith(CALLBACK_PREFIXES["feature_request"]))
-async def handle_feature_request(callback: CallbackQuery, db: DatabaseService):
-    """Handle feature request button"""
+@router.callback_query(F.data.startswith("select_flight"))
+async def handle_select_flight(callback: CallbackQuery, db: DatabaseService, 
+                             flight_service: FlightService, typing_service: TypingService):
+    """Handle selection of specific flight from multiple flights"""
     try:
-        # Parse callback data: feature:FEATURE_CODE:FLIGHT_ID
-        parts = callback.data.replace(CALLBACK_PREFIXES["feature_request"], "").split(":")
-        feature_code = parts[0]
-        flight_id = parts[1] if len(parts) > 1 else None
-        
-        # Get user
+        # Новый формат callback_data: select_flight|flight_number|date|dep_time|dep_iata|arr_iata|flight_type
+        data = callback.data.replace("select_flight|", "")
+        parts = data.split("|")
+        if len(parts) < 6:
+            await callback.answer("Invalid flight selection")
+            return
+        flight_number = parts[0]
+        date = parts[1]
+        dep_time = parts[2]
+        dep_iata = parts[3]
+        arr_iata = parts[4]
+        flight_type = parts[5]  # 'departure' или 'arrival'
+
         user = await db.get_or_create_user(
             telegram_id=callback.from_user.id,
             username=callback.from_user.username
         )
+        lang = user.get('language_code', 'en')
+
+        # Выбираем dateLocalRole для API
+        date_local_role = 'Departure' if flight_type == 'departure' else 'Arrival'
+
+        # Получаем данные рейса через API с фильтрацией
+        flights_data = await flight_service.get_flight_data(flight_number, date, user['id'], date_local_role)
+        flights = flights_data.get('data', [])
         
-        # Save feature request
-        await db.save_feature_request(
-            user_id=user['id'],
-            feature_code=feature_code,
-            flight_id=flight_id,
-            comment="Requested via inline button"
-        )
+        # Если API вернул отфильтрованные данные, используем готовое сообщение
+        if flights_data.get('message'):
+            text = flights_data['message']
+        else:
+            # Если нет готового сообщения, показываем ошибку
+            await callback.answer("Flight not found for selection")
+            return
         
-        # Update keyboard to show it's been requested
-        await callback.message.edit_reply_markup(reply_markup=get_empty_keyboard())
-        await callback.answer("Feature request saved! We'll notify you when it's ready.")
+        # Создаем пустую клавиатуру для отображения только сообщения
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+        await callback.message.edit_text(text, reply_markup=keyboard)
+        await callback.answer()
         
     except Exception as e:
-        await callback.answer("Error saving feature request")
+        await callback.answer("Error processing flight selection")
         await db.log_audit(
             user_id=user['id'] if 'user' in locals() else None,
-            action='feature_request_error',
+            action='select_flight_error',
             details={'error': str(e), 'callback_data': callback.data}
         ) 
-
-@router.callback_query(F.data.startswith("select_flight_"))
-async def handle_select_flight(callback: CallbackQuery, db: DatabaseService, flight_service: FlightService):
-    # Пример callback_data: select_flight_SU1314_2025-07-07 или select_flight_SU1314_2025-07-07_07:10
-    data = callback.data.replace("select_flight_", "")
-    parts = data.split("_")
-    flight_number = parts[0]
-    date = parts[1] if len(parts) > 1 else None
-    # time = parts[2] if len(parts) > 2 else None  # пока не используем
-
-    user = await db.get_or_create_user(
-        telegram_id=callback.from_user.id,
-        username=callback.from_user.username
-    )
-    lang = user.get('language_code', 'en')
-
-    # Новый запрос к backend для выбранного рейса
-    await process_flight_request(
-        callback.message, flight_number, date, user, db, flight_service, lang
-    )
-    await callback.answer() 

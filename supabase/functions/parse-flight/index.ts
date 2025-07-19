@@ -37,7 +37,7 @@ serve(async (req) => {
       )
     }
 
-    // Use regex parsing only (GPT temporarily disabled)
+    // Use improved regex parsing
     const result = parseFlightRequest(text)
     console.log(`Parse request: input="${text}", result=`, JSON.stringify(result, null, 2))
 
@@ -56,7 +56,7 @@ serve(async (req) => {
           details: {
             input_text: text,
             result: result,
-            method: 'regex'
+            method: 'improved_regex'
           }
         })
     }
@@ -80,118 +80,91 @@ serve(async (req) => {
   }
 })
 
-async function parseFlightRequestWithGPT(text: string): Promise<ParseResponse | null> {
-  const openaiKey = Deno.env.get('OPENAI_API_KEY')
-  
-  if (!openaiKey) {
-    return null // Fallback to regex parsing
-  }
-
-  try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openaiKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
-        messages: [
-          {
-            role: 'system',
-            content: 'Extract flight number and date from user input. Return only JSON with flight_number and date fields. Date should be in YYYY-MM-DD format. If no date found, use today. If no flight number found, return null for flight_number.'
-          },
-          {
-            role: 'user',
-            content: text
-          }
-        ],
-        temperature: 0.1,
-        max_tokens: 100
-      })
-    })
-
-    if (!response.ok) {
-      console.error('OpenAI API error:', response.status)
-      return null
-    }
-
-    const data = await response.json()
-    const content = data.choices[0]?.message?.content
-    
-    if (!content) {
-      return null
-    }
-
-    try {
-      const parsed = JSON.parse(content)
-      return {
-        flight_number: parsed.flight_number || undefined,
-        date: parsed.date || undefined,
-        confidence: 0.9
-      }
-    } catch (e) {
-      console.error('Failed to parse GPT response:', e)
-      return null
-    }
-  } catch (error) {
-    console.error('GPT parsing error:', error)
-    return null
-  }
-}
-
 function parseFlightRequest(text: string): ParseResponse {
-  const cleanText = text.toLowerCase().trim()
+  // Нормализуем пробелы и разделители (пробелы, табы, запятые, точки с запятой)
+  const cleanText = text
+    .toLowerCase()
+    .replace(/[\s,;]+/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+  console.log(`Normalized input: "${cleanText}"`);
   
-  // Flight number patterns: 2-3 letters + 1-4 digits
-  const flightNumberPattern = /\b([a-z]{2,3}\d{1,4})\b/i
-  const flightMatch = cleanText.match(flightNumberPattern)
+  // Enhanced flight number patterns
+  // Matches: AA8242, AA 8242, AA-8242, SU100, SU 100, SU-100
+  // Also handles: aa8242, aa 8242, etc.
+  const flightNumberPatterns = [
+    /\b([a-z]{2,3})\s*(\d{1,5})\b/i,  // AA 8242, SU 100
+    /\b([a-z]{2,3})-(\d{1,5})\b/i,    // AA-8242, SU-100
+    /\b([a-z]{2,3})(\d{1,5})\b/i      // AA8242, SU100
+  ]
   
-  // Date patterns
-  const todayPattern = /\b(today|сегодня|today|сегодня)\b/i
-  const tomorrowPattern = /\b(tomorrow|завтра|tomorrow|завтра)\b/i
-  const yesterdayPattern = /\b(yesterday|вчера|yesterday|вчера)\b/i
-  const datePattern = /\b(\d{1,2}[\.\/\-]\d{1,2}[\.\/\-]\d{2,4})\b/
-  const relativePattern = /\b(\d+)\s*(days?|дней?|дня?)\s*(ago|from now|назад|через)\b/i
+  // Enhanced date patterns with multi-language support
+  const todayPattern = /\b(today|сегодня|сегодня|today)\b/i
+  const tomorrowPattern = /\b(tomorrow|завтра|завтра|tomorrow)\b/i
+  const yesterdayPattern = /\b(yesterday|вчера|вчера|yesterday)\b/i
+  const datePatterns = [
+    /\b(\d{1,2})[\.,\/\-](\d{1,2})[\.,\/\-](\d{2,4})\b/,  // DD.MM.YYYY, DD/MM/YYYY, DD-MM-YYYY, DD,MM,YYYY
+    /\b(\d{4})[\.,\/\-](\d{1,2})[\.,\/\-](\d{1,2})\b/,    // YYYY.MM.DD, YYYY/MM/DD, YYYY-MM-DD, YYYY,MM,DD
+    /\b(\d{1,2})\s+(\d{1,2})\s+(\d{2,4})\b/             // DD MM YYYY
+  ]
   
   let flight_number: string | undefined
   let date: string | undefined
   let confidence = 0
 
-  // Extract flight number
-  if (flightMatch) {
-    flight_number = flightMatch[1].replace(/\s+/g, '').toUpperCase()
-    console.log(`Flight number parsing: match="${flightMatch[1]}", result="${flight_number}"`)
-    confidence += 0.4
+  // Extract flight number using multiple patterns
+  for (const pattern of flightNumberPatterns) {
+    const flightMatch = cleanText.match(pattern)
+    if (flightMatch) {
+      const airlineCode = flightMatch[1].toUpperCase()
+      const flightNum = flightMatch[2]
+      flight_number = airlineCode + flightNum
+      console.log(`Flight number parsing: airline="${airlineCode}", number="${flightNum}", result="${flight_number}"`)
+      confidence += 0.4
+      break // Use first match
+    }
   }
 
   // Extract date
   if (todayPattern.test(cleanText)) {
     date = new Date().toISOString().split('T')[0]
+    console.log(`Date parsing: found "today", result="${date}"`)
     confidence += 0.3
   } else if (tomorrowPattern.test(cleanText)) {
     const tomorrow = new Date()
     tomorrow.setDate(tomorrow.getDate() + 1)
     date = tomorrow.toISOString().split('T')[0]
+    console.log(`Date parsing: found "tomorrow", result="${date}"`)
     confidence += 0.3
   } else if (yesterdayPattern.test(cleanText)) {
     const yesterday = new Date()
     yesterday.setDate(yesterday.getDate() - 1)
     date = yesterday.toISOString().split('T')[0]
+    console.log(`Date parsing: found "yesterday", result="${date}"`)
     confidence += 0.3
-  } else if (datePattern.test(cleanText)) {
-    const dateMatch = cleanText.match(datePattern)
-    if (dateMatch) {
-      // Parse DD.MM.YYYY or DD/MM/YYYY format
-      const dateStr = dateMatch[1].replace(/[\/\-]/g, '.')
-      const parts = dateStr.split('.')
-      if (parts.length === 3) {
-        const day = parts[0].padStart(2, '0')
-        const month = parts[1].padStart(2, '0')
-        const year = parts[2].length === 2 ? '20' + parts[2] : parts[2]
+  } else {
+    // Try different date patterns
+    for (const pattern of datePatterns) {
+      const dateMatch = cleanText.match(pattern)
+      if (dateMatch) {
+        let day, month, year
+        
+        if (dateMatch[1].length === 4) {
+          // YYYY.MM.DD format
+          year = dateMatch[1]
+          month = dateMatch[2].padStart(2, '0')
+          day = dateMatch[3].padStart(2, '0')
+        } else {
+          // DD.MM.YYYY format
+          day = dateMatch[1].padStart(2, '0')
+          month = dateMatch[2].padStart(2, '0')
+          year = dateMatch[3].length === 2 ? '20' + dateMatch[3] : dateMatch[3]
+        }
+        
         date = `${year}-${month}-${day}`
-        console.log(`Date parsing: input="${dateMatch[1]}", parts=[${parts.join(', ')}], result="${date}"`)
+        console.log(`Date parsing: input="${dateMatch[0]}", parts=[${day}, ${month}, ${year}], result="${date}"`)
         confidence += 0.3
+        break // Use first match
       }
     }
   }

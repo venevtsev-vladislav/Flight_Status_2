@@ -1,0 +1,107 @@
+{
+  "flows": {
+    "welcome": {
+      "message": {
+        "en": "👋 Hello, {username}!\nI can help you track flight status.\nJust type flight number and date, for example:\n✈️ SU100 today\n📅 AFL123 05.07.2025",
+        "ru": "👋 Привет, {username}!\nЯ помогу отследить статус рейса.\nПросто напиши номер рейса и дату, например:\n✈️ SU100 сегодня\n📅 AFL123 05.07.2025"
+      },
+      "buttons": [],
+      "next_state": null
+    },
+    "parse_error": {
+      "message": {
+        "en": "⚠️ Sorry, I couldn't recognize the flight number or date.\nPlease use the format like: SU100 today or SU100 05.07.2025",
+        "ru": "⚠️ Извините, не удалось распознать номер рейса или дату.\nПожалуйста, используйте формат: SU100 сегодня или SU100 05.07.2025"
+      },
+      "buttons": [
+        {
+          "text": {"en": "🔍 Try again", "ru": "🔍 Попробовать снова"},
+          "callback_data": "new_search"
+        }
+      ],
+      "next_state": null
+    },
+    "waiting_for_date": {
+      "message": {
+        "en": "I found flight number: {flight_number}.\nNow choose a date or type the date manually (DD.MM.YYYY):",
+        "ru": "Я нашел номер рейса: {flight_number}.\nТеперь выберите дату или введите дату вручную (ДД.ММ.ГГГГ):"
+      },
+      "buttons": [
+        [
+          {"text": {"en": "Yesterday", "ru": "Вчера"}, "callback_data": "date:yesterday"},
+          {"text": {"en": "Today", "ru": "Сегодня"}, "callback_data": "date:today"},
+          {"text": {"en": "Tomorrow", "ru": "Завтра"}, "callback_data": "date:tomorrow"}
+        ]
+      ],
+      "next_state": "waiting_for_date"
+    },
+    "waiting_for_number": {
+      "message": {
+        "en": "You entered a date: {date}\nPlease enter the flight number (e.g. QR123)",
+        "ru": "Вы ввели дату: {date}\nПожалуйста, введите номер рейса (например QR123)"
+      },
+      "buttons": [],
+      "next_state": "waiting_for_number"
+    },
+    "flight_found": {
+      "message": "{flight_info}",
+      "buttons": [
+        [
+          {"text": {"en": "🔄 Refresh", "ru": "🔄 Обновить"}, "callback_data": "refresh:{flight_id}"},
+          {"text": {"en": "🔔 Subscribe", "ru": "🔔 Подписаться"}, "callback_data": "subscribe:{flight_id}"}
+        ],
+        [
+          {"text": {"en": "🔍 New search", "ru": "🔍 Новый поиск"}, "callback_data": "new_search"},
+          {"text": {"en": "🗂 My flights", "ru": "🗂 Мои рейсы"}, "callback_data": "my_flights"}
+        ]
+      ],
+      "next_state": null
+    },
+    "no_data": {
+      "message": {
+        "en": "⚠️ Sorry, could not find flight data.",
+        "ru": "⚠️ Извините, не удалось найти данные по рейсу."
+      },
+      "buttons": [
+        [
+          {"text": {"en": "🔍 Try again", "ru": "🔍 Попробовать снова"}, "callback_data": "new_search"},
+          {"text": {"en": "🗂 My flights", "ru": "🗂 Мои рейсы"}, "callback_data": "my_flights"}
+        ]
+      ],
+      "next_state": null
+    }
+  },
+  "error_handling": {
+    "api_error": {
+      "message": {
+        "en": "🚦 Increased demand, I need a little more time to process",
+        "ru": "🚦 Повышенный спрос, мне нужно немного больше времени для обработки"
+      },
+      "retry_after": 30
+    },
+    "no_data": {
+      "message": {
+        "en": "📋 Flight data is currently unavailable",
+        "ru": "📋 Данные по рейсу в настоящее время недоступны"
+      }
+    },
+    "technical_error": {
+      "message": {
+        "en": "🔧 Technical issue, our specialists are already solving",
+        "ru": "🔧 Техническая проблема, наши специалисты уже решают"
+      }
+    }
+  },
+  "validation": {
+    "date_formats": ["DD.MM.YYYY", "DD.MM.YY", "YYYY-MM-DD"],
+    "flight_number_patterns": ["^[A-Z]{2,3}\\d{1,4}$", "^[A-Z]{1,2}\\d{1,4}[A-Z]?$"],
+    "max_future_days": 365,
+    "max_past_days": 30
+  },
+  "features": {
+    "subscription_enabled": true,
+    "notifications_enabled": true,
+    "multi_language": true,
+    "audit_logging": true
+  }
+} 

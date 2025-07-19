@@ -94,6 +94,16 @@ CREATE TABLE translations (
   UNIQUE(key, lang)
 );
 
+-- Flight selections table (for multiple flights scenario)
+CREATE TABLE flight_selections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  flight_number TEXT NOT NULL,
+  search_date DATE NOT NULL,
+  selected_flight_info JSONB,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Audit logs table
 CREATE TABLE audit_logs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -103,6 +113,21 @@ CREATE TABLE audit_logs (
   ip_address INET,
   user_agent TEXT,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Active searches table for storing user search state
+CREATE TABLE active_searches (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  telegram_id BIGINT NOT NULL,
+  search_state TEXT NOT NULL, -- 'waiting_for_date', 'waiting_for_number', 'complete'
+  flight_number TEXT,
+  search_date DATE,
+  parsed_data JSONB, -- Store parsed flight number and date
+  expires_at TIMESTAMP WITH TIME ZONE DEFAULT (NOW() + INTERVAL '1 hour'),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(telegram_id)
 );
 
 -- Indexes for better performance
@@ -116,8 +141,12 @@ CREATE INDEX idx_messages_user_id ON messages(user_id);
 CREATE INDEX idx_feature_requests_user_id ON feature_requests(user_id);
 CREATE INDEX idx_flight_logs_flight_id ON flight_logs(flight_id);
 CREATE INDEX idx_translations_key_lang ON translations(key, lang);
+CREATE INDEX idx_flight_selections_user_id ON flight_selections(user_id);
+CREATE INDEX idx_flight_selections_flight_number ON flight_selections(flight_number);
 CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
+CREATE INDEX idx_active_searches_telegram_id ON active_searches(telegram_id);
+CREATE INDEX idx_active_searches_expires_at ON active_searches(expires_at);
 
 -- Insert default translations
 INSERT INTO translations (key, lang, value) VALUES
@@ -175,6 +204,8 @@ ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE feature_requests ENABLE ROW LEVEL SECURITY;
 ALTER TABLE flight_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE translations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE flight_selections ENABLE ROW LEVEL SECURITY;
+ALTER TABLE active_searches ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 
 -- Allow all operations for now (we'll restrict later if needed)
@@ -187,4 +218,6 @@ CREATE POLICY "Allow all operations on messages" ON messages FOR ALL USING (true
 CREATE POLICY "Allow all operations on feature_requests" ON feature_requests FOR ALL USING (true);
 CREATE POLICY "Allow all operations on flight_logs" ON flight_logs FOR ALL USING (true);
 CREATE POLICY "Allow all operations on translations" ON translations FOR ALL USING (true);
+CREATE POLICY "Allow all operations on flight_selections" ON flight_selections FOR ALL USING (true);
+CREATE POLICY "Allow all operations on active_searches" ON active_searches FOR ALL USING (true);
 CREATE POLICY "Allow all operations on audit_logs" ON audit_logs FOR ALL USING (true); 
