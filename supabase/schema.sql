@@ -52,7 +52,24 @@ CREATE TABLE subscriptions (
   user_id UUID REFERENCES users(id) ON DELETE CASCADE,
   flight_id UUID REFERENCES flights(id) ON DELETE CASCADE,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  webhook_id TEXT, -- идентификатор подписки на webhook (AeroDataBox)
   UNIQUE(user_id, flight_id)
+);
+
+-- Flight subscriptions table (for direct flight_number and date subscriptions)
+CREATE TABLE flight_subscriptions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  flight_number TEXT NOT NULL,
+  flight_date DATE NOT NULL,
+  departure_airport TEXT,
+  arrival_airport TEXT,
+  airline TEXT,
+  status TEXT DEFAULT 'active',
+  subscription_id TEXT, -- ID подписки AeroDataBox
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  UNIQUE(user_id, flight_number, flight_date)
 );
 
 -- Messages table
@@ -130,6 +147,21 @@ CREATE TABLE active_searches (
   UNIQUE(telegram_id)
 );
 
+-- Unrecognized flights table (for flight numbers that couldn't be parsed)
+CREATE TABLE unrecognized_flights (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+  telegram_id BIGINT NOT NULL,
+  flight_number TEXT NOT NULL,
+  raw_input TEXT NOT NULL,
+  parse_confidence INTEGER DEFAULT 0,
+  suggested_date DATE,
+  status TEXT DEFAULT 'pending', -- pending, resolved, ignored
+  resolution_notes TEXT,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Indexes for better performance
 CREATE INDEX idx_users_telegram_id ON users(telegram_id);
 CREATE INDEX idx_flights_number_date ON flights(flight_number, date);
@@ -147,6 +179,9 @@ CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at);
 CREATE INDEX idx_active_searches_telegram_id ON active_searches(telegram_id);
 CREATE INDEX idx_active_searches_expires_at ON active_searches(expires_at);
+CREATE INDEX idx_flight_subscriptions_user_id ON flight_subscriptions(user_id);
+CREATE INDEX idx_flight_subscriptions_flight_number ON flight_subscriptions(flight_number);
+CREATE INDEX idx_flight_subscriptions_flight_date ON flight_subscriptions(flight_date);
 
 -- Insert default translations
 INSERT INTO translations (key, lang, value) VALUES

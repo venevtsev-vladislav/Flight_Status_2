@@ -1,4 +1,4 @@
-from supabase._sync.client import create_client
+from supabase import create_client
 from typing import Optional, Dict, Any, List
 import logging
 from datetime import datetime
@@ -10,7 +10,7 @@ class DatabaseService:
     def __init__(self):
         if not SUPABASE_URL or not SUPABASE_ANON_KEY:
             raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be set and not None")
-        self.supabase = create_client(str(SUPABASE_URL), str(SUPABASE_ANON_KEY))
+        self.supabase = create_client(SUPABASE_URL, SUPABASE_ANON_KEY)
     
     async def get_or_create_user(self, telegram_id: int, username: Optional[str] = None, 
                                 language_code: str = "en", platform: str = "telegram") -> Dict[str, Any]:
@@ -85,6 +85,17 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error in get_or_create_flight: {e}")
             raise
+
+    async def get_flight_by_id(self, flight_id: str) -> Dict[str, Any] | None:
+        """Get flight by ID from flights table"""
+        try:
+            response = self.supabase.table('flights').select('*').eq('id', flight_id).single().execute()
+            if response.data:
+                return response.data
+            return None
+        except Exception as e:
+            logger.error(f"Error in get_flight_by_id: {e}")
+            return None
     
     async def save_flight_request(self, user_id: str, flight_id: str) -> Dict[str, Any]:
         """Save flight request"""
@@ -119,51 +130,6 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error in update_flight_details: {e}")
             raise
-    
-    async def get_user_subscriptions(self, user_id: str) -> List[Dict[str, Any]]:
-        """Get user's flight subscriptions"""
-        try:
-            response = self.supabase.table('subscriptions').select('*, flights(*)').eq('user_id', user_id).execute()
-            return response.data
-            
-        except Exception as e:
-            logger.error(f"Error in get_user_subscriptions: {e}")
-            return []
-    
-    async def subscribe_to_flight(self, user_id: str, flight_id: str) -> Dict[str, Any]:
-        """Subscribe user to flight updates"""
-        try:
-            subscription_data = {
-                'user_id': user_id,
-                'flight_id': flight_id
-            }
-            
-            response = self.supabase.table('subscriptions').upsert(subscription_data).execute()
-            return response.data[0]
-            
-        except Exception as e:
-            logger.error(f"Error in subscribe_to_flight: {e}")
-            raise
-    
-    async def unsubscribe_from_flight(self, user_id: str, flight_id: str) -> bool:
-        """Unsubscribe user from flight updates"""
-        try:
-            response = self.supabase.table('subscriptions').delete().eq('user_id', user_id).eq('flight_id', flight_id).execute()
-            return len(response.data) > 0
-            
-        except Exception as e:
-            logger.error(f"Error in unsubscribe_from_flight: {e}")
-            return False
-    
-    async def is_subscribed(self, user_id: str, flight_id: str) -> bool:
-        """Check if user is subscribed to flight"""
-        try:
-            response = self.supabase.table('subscriptions').select('id').eq('user_id', user_id).eq('flight_id', flight_id).execute()
-            return len(response.data) > 0
-            
-        except Exception as e:
-            logger.error(f"Error in is_subscribed: {e}")
-            return False
     
     async def save_feature_request(self, user_id: str, feature_code: str, 
                                   flight_id: Optional[str] = None, comment: Optional[str] = None) -> Dict[str, Any]:
@@ -210,3 +176,116 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error in log_audit: {e}")
             raise
+    
+    async def create_flight_subscription(self, subscription_data: dict) -> str | None:
+        """Create or update a flight subscription in flight_subscriptions table"""
+        try:
+            # Check if subscription already exists
+            existing = await self.get_flight_subscription(
+                subscription_data['user_id'], 
+                subscription_data['flight_number'], 
+                subscription_data['flight_date']
+            )
+            
+            if existing:
+                # Update existing subscription
+                logger.info(f"Updating existing subscription for flight {subscription_data['flight_number']}")
+                response = self.supabase.table('flight_subscriptions')\
+                    .update(subscription_data)\
+                    .eq('user_id', subscription_data['user_id'])\
+                    .eq('flight_number', subscription_data['flight_number'])\
+                    .eq('flight_date', subscription_data['flight_date'])\
+                    .execute()
+                if response.data and len(response.data) > 0:
+                    return response.data[0]['id']
+            else:
+                # Create new subscription
+                logger.info(f"Creating new subscription for flight {subscription_data['flight_number']}")
+                response = self.supabase.table('flight_subscriptions').insert(subscription_data).execute()
+                if response.data and len(response.data) > 0:
+                    return response.data[0]['id']
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error in create_flight_subscription: {e}")
+            return None
+
+    async def get_flight_subscription(self, user_id: str, flight_number: str, flight_date: str) -> dict | None:
+        """Get a flight subscription by user, flight_number and date from flight_subscriptions table"""
+        try:
+            response = self.supabase.table('flight_subscriptions').select('*')\
+                .eq('user_id', user_id)\
+                .eq('flight_number', flight_number)\
+                .eq('flight_date', flight_date)\
+                .execute()
+            if response.data and len(response.data) > 0:
+                return response.data[0]
+            return None
+        except Exception as e:
+            logger.error(f"Error in get_flight_subscription: {e}")
+            return None
+
+    async def unsubscribe_from_flight(self, user_id: str, flight_id: str) -> bool:
+        """Unsubscribe user from flight in flight_subscriptions table by id"""
+        try:
+            response = self.supabase.table('flight_subscriptions')\
+                .delete()\
+                .eq('user_id', user_id)\
+                .eq('id', flight_id)\
+                .execute()
+            return response.data is not None
+        except Exception as e:
+            logger.error(f"Error in unsubscribe_from_flight: {e}")
+            return False
+
+    async def is_subscribed(self, user_id: str, subscription_id: str) -> bool:
+        """Check if user is subscribed to flight in flight_subscriptions table by subscription id"""
+        try:
+            response = self.supabase.table('flight_subscriptions').select('id').eq('user_id', user_id).eq('id', subscription_id).execute()
+            return len(response.data) > 0
+        except Exception as e:
+            logger.error(f"Error in is_subscribed: {e}")
+            return False
+
+    async def get_flight_detail_by_uuid(self, uuid: str) -> dict | None:
+        try:
+            response = self.supabase.table('flight_details').select('*').eq('id', uuid).single().execute()
+            if response.data:
+                return response.data
+            return None
+        except Exception as e:
+            logger.error(f"Error in get_flight_detail_by_uuid: {e}")
+            return None
+
+    async def get_user_subscriptions(self, user_id: str) -> List[Dict[str, Any]]:
+        """Get all active flight subscriptions for a user"""
+        try:
+            response = self.supabase.table('flight_subscriptions')\
+                .select('*')\
+                .eq('user_id', user_id)\
+                .eq('status', 'active')\
+                .order('created_at', desc=True)\
+                .execute()
+            
+            if response.data:
+                return response.data
+            return []
+        except Exception as e:
+            logger.error(f"Error in get_user_subscriptions: {e}")
+            return []
+
+    async def get_subscription_by_id(self, subscription_id: str) -> Dict[str, Any] | None:
+        """Get subscription by ID"""
+        try:
+            response = self.supabase.table('flight_subscriptions')\
+                .select('*')\
+                .eq('id', subscription_id)\
+                .single()\
+                .execute()
+            
+            if response.data:
+                return response.data
+            return None
+        except Exception as e:
+            logger.error(f"Error in get_subscription_by_id: {e}")
+            return None

@@ -24,12 +24,13 @@ class FlightSearchStates(StatesGroup):
 def build_inline_keyboard(buttons_data):
     if not buttons_data:
         return None
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=btn['text'], callback_data=btn['callback_data']) for btn in row]
-            for row in buttons_data
-        ]
-    )
+    # Проверяем, что каждая строка — это массив кнопок
+    keyboard = []
+    for row in buttons_data:
+        # row — это массив объектов с text и callback_data
+        buttons = [InlineKeyboardButton(text=btn['text'], callback_data=btn['callback_data']) for btn in row]
+        keyboard.append(buttons)
+    return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 @router.message(F.text)
 async def handle_text_message(message: Message, state: FSMContext, db: DatabaseService, 
@@ -221,9 +222,17 @@ async def process_flight_request(message: Message, flight_number: str, date: str
         logger.info(f"🔍 DEBUG: Sending search started message: {search_started_text}")
         await message.answer(search_started_text)
         
+        # Проверяем подписку пользователя на этот рейс
+        user_id = user['id'] if user and 'id' in user else None
+        flight_id = flight['id'] if flight and 'id' in flight else None
+        is_subscribed = False
+        if user_id and flight_id:
+            is_subscribed = await db.is_subscribed(user_id, flight_id)
+        logger.info(f"🔍 DEBUG: is_subscribed={is_subscribed}")
+        
         # Get flight data directly
         logger.info(f"🔍 DEBUG: Calling flight_service.get_flight_data directly")
-        flight_data = await flight_service.get_flight_data(flight_number, date, user['id'])
+        flight_data = await flight_service.get_flight_data(flight_number, date, user_id)
         logger.info(f"🔍 DEBUG: Flight data received: {flight_data}")
         
         if flight_data.get('error'):
@@ -231,29 +240,31 @@ async def process_flight_request(message: Message, flight_number: str, date: str
             # Handle API error
             if flight_data['error'] == 'past_flight':
                 text = MESSAGE_TEMPLATES["past_flight"][lang]
-                keyboard = get_feature_request_keyboard(flight['id'], lang)
+                keyboard = get_feature_request_keyboard(flight_id, lang)
             elif flight_data['error'] == 'future_flight':
                 text = MESSAGE_TEMPLATES["future_flight"][lang].format(
                     flight_number=flight_number, date=date
                 )
-                keyboard = get_feature_request_keyboard(flight['id'], lang)
+                keyboard = get_feature_request_keyboard(flight_id, lang)
             else:
                 text = MESSAGE_TEMPLATES["api_error"][lang]
                 keyboard = None
         else:
             logger.info(f"🔍 DEBUG: Flight data successful, preparing response")
-            # Backend handles all validation and formatting
             text = flight_data.get('message', MESSAGE_TEMPLATES["no_data_found"][lang])
-            buttons = flight_data.get('buttons')
-            keyboard = build_inline_keyboard(buttons)
+            # Всегда используем только кнопки, пришедшие с бэка
+            if 'buttons' in flight_data and flight_data['buttons']:
+                keyboard = build_inline_keyboard(flight_data['buttons'])
+            else:
+                keyboard = None
         
         # Send response
         logger.info(f"🔍 DEBUG: Sending final response: {text}")
         if keyboard:
-            await message.answer(text, reply_markup=keyboard)
+            await message.answer(text or '', reply_markup=keyboard)
         else:
-            await message.answer(text)
-            
+            await message.answer(text or '')
+        
     except Exception as e:
         logger.error(f"❌ ERROR in process_flight_request: {str(e)}")
         # Log error and send fallback message
@@ -361,3 +372,227 @@ async def handle_number_input_with_search(message: Message, active_search: dict,
         logger.error(f"❌ ERROR in handle_number_input_with_search: {str(e)}")
         await message.answer("Error processing flight number. Please try again.")
         await search_service.delete_active_search(message.from_user.id) 
+
+def formatTelegramMessage(flight: dict) -> str:
+    """Format flight data for Telegram message display"""
+    try:
+        if not flight or flight is None:
+            return '⚠️ No flight data.'
+        
+        if not isinstance(flight, dict):
+            logger.error(f"Flight data is not a dict: {type(flight)}")
+            return '⚠️ Invalid flight data format.'
+        
+        lines = []
+        
+        # Flight number and route
+        flight_number = flight.get('number', '')
+        dep_iata = flight.get('departure', {}).get('airport', {}).get('iata')
+        arr_iata = flight.get('arrival', {}).get('airport', {}).get('iata')
+        dep_name = flight.get('departure', {}).get('airport', {}).get('name')
+        arr_name = flight.get('arrival', {}).get('airport', {}).get('name')
+        
+        # Header line
+        header = flight_number
+        if dep_iata and arr_iata:
+            header += f' {dep_iata}→{arr_iata}'
+        
+        # Add departure time (prefer revised, then scheduled)
+        dep_revised_obj = flight.get('departure', {}).get('revisedTime', {})
+        dep_scheduled_obj = flight.get('departure', {}).get('scheduledTime', {})
+        
+        dep_revised = dep_revised_obj.get('local') if dep_revised_obj else None
+        dep_scheduled = dep_scheduled_obj.get('local') if dep_scheduled_obj else None
+        dep_time = dep_revised or dep_scheduled
+        
+        if dep_time:
+            try:
+                # Parse time from "2025-07-09 21:50+03:00" format
+                time_part = dep_time.split(' ')[1].split('+')[0]
+                header += f' {time_part}'
+                
+                # Add date
+                date_part = dep_time.split(' ')[0]
+                date_obj = datetime.strptime(date_part, '%Y-%m-%d')
+                date_str = date_obj.strftime('%d.%m.%Y')
+                header += f' ({date_str})'
+            except:
+                pass
+        
+        lines.append(header.strip())
+        
+        # Status
+        status = flight.get('status', '')
+        if status:
+            status_indicators = {
+                'scheduled': '⏳',
+                'checkin': '🟠',
+                'boarding': '🟢',
+                'gateclosed': '🔴',
+                'departed': '🛫',
+                'enroute': '✈️',
+                'arrived': '🏁',
+                'delayed': '⏰',
+                'cancelled': '❌',
+                'canceled': '❌',
+                'diverted': '⚠️'
+            }
+            indicator = status_indicators.get(status.lower(), '⏳')
+            lines.append(f'{indicator} Status: {status}')
+            lines.append('')
+        
+        # Codeshare info
+        codeshares = flight.get('codeshares', [])
+        if codeshares:
+            codeshare_list = ', '.join(codeshares)
+            lines.append(f'Also listed as: {codeshare_list}')
+            lines.append('')
+        elif flight.get('codeshareNote'):
+            lines.append(f'📋 {flight["codeshareNote"]}')
+            lines.append('')
+        
+        # Departure section
+        if dep_iata or dep_name:
+            lines.append(f'🛫 {dep_iata or "--"} / {dep_name or ""}'.strip())
+            
+            # Terminal
+            terminal = flight.get('departure', {}).get('terminal')
+            if terminal:
+                lines.append(f'Terminal: {terminal}')
+            
+            # Check-in desk
+            checkin = flight.get('departure', {}).get('checkInDesk')
+            if checkin:
+                lines.append(f'Check-in: {checkin}')
+            
+            # Gate
+            gate = flight.get('departure', {}).get('gate')
+            if gate:
+                # Add boarding time for CheckIn status
+                status = flight.get('status', '').lower()
+                if status == 'checkin':
+                    # Calculate boarding time (usually 20 minutes before departure)
+                    dep_scheduled = flight.get('departure', {}).get('scheduledTime', {}).get('local')
+                    if dep_scheduled:
+                        try:
+                            # Parse departure time
+                            dep_time = datetime.strptime(dep_scheduled.split(' ')[0] + ' ' + dep_scheduled.split(' ')[1].split('+')[0], '%Y-%m-%d %H:%M')
+                            # Calculate boarding time (20 minutes before)
+                            boarding_time = dep_time - timedelta(minutes=20)
+                            boarding_time_str = boarding_time.strftime('%I:%M %p')
+                            lines.append(f'Gate: {gate} (boarding at {boarding_time_str})')
+                        except Exception as e:
+                            logger.error(f"Error calculating boarding time: {e}")
+                            lines.append(f'Gate: {gate}')
+                    else:
+                        lines.append(f'Gate: {gate}')
+                elif status == 'boarding':
+                    lines.append(f'Gate: {gate} (boarding in progress)')
+                else:
+                    lines.append(f'Gate: {gate}')
+            
+            # Departure time
+            dep_actual_obj = flight.get('departure', {}).get('actualTime', {})
+            dep_revised_obj = flight.get('departure', {}).get('revisedTime', {})
+            dep_scheduled_obj = flight.get('departure', {}).get('scheduledTime', {})
+            
+            dep_actual = dep_actual_obj.get('local') if dep_actual_obj else None
+            dep_revised = dep_revised_obj.get('local') if dep_revised_obj else None
+            dep_scheduled = dep_scheduled_obj.get('local') if dep_scheduled_obj else None
+            
+            dep_current = dep_actual or dep_revised or dep_scheduled
+            if dep_current and dep_scheduled and dep_current != dep_scheduled:
+                try:
+                    current_time = dep_current.split(' ')[1].split('+')[0]
+                    scheduled_time = dep_scheduled.split(' ')[1].split('+')[0]
+                    lines.append(f'Departure: {current_time} (was {scheduled_time})')
+                except:
+                    try:
+                        time_part = dep_current.split(' ')[1].split('+')[0]
+                        lines.append(f'Departure: {time_part}')
+                    except:
+                        lines.append(f'Departure: {dep_current}')
+            elif dep_current:
+                try:
+                    time_part = dep_current.split(' ')[1].split('+')[0]
+                    lines.append(f'Departure: {time_part}')
+                except:
+                    lines.append(f'Departure: {dep_current}')
+            
+            lines.append('')
+        
+        # Arrival section
+        if arr_iata or arr_name:
+            lines.append(f'🛬 {arr_iata or "--"} / {arr_name or ""}'.strip())
+            
+            # Terminal
+            terminal = flight.get('arrival', {}).get('terminal')
+            if terminal:
+                lines.append(f'Terminal: {terminal}')
+            
+            # Gate
+            gate = flight.get('arrival', {}).get('gate')
+            if gate and gate is not None:
+                lines.append(f'Gate: {gate}')
+            
+            # Arrival time
+            arr_actual = flight.get('arrival', {}).get('actualTime', {})
+            arr_revised = flight.get('arrival', {}).get('revisedTime', {})
+            arr_predicted = flight.get('arrival', {}).get('predictedTime', {})
+            arr_scheduled = flight.get('arrival', {}).get('scheduledTime', {})
+            
+            arr_actual_local = arr_actual.get('local') if arr_actual else None
+            arr_revised_local = arr_revised.get('local') if arr_revised else None
+            arr_predicted_local = arr_predicted.get('local') if arr_predicted else None
+            arr_scheduled_local = arr_scheduled.get('local') if arr_scheduled else None
+            
+            arr_current = arr_actual_local or arr_revised_local or arr_predicted_local or arr_scheduled_local
+            if arr_current and arr_scheduled_local and arr_current != arr_scheduled_local:
+                try:
+                    current_time = arr_current.split(' ')[1].split('+')[0]
+                    scheduled_time = arr_scheduled_local.split(' ')[1].split('+')[0]
+                    lines.append(f'Arrival: {current_time} (was {scheduled_time})')
+                except:
+                    try:
+                        time_part = arr_current.split(' ')[1].split('+')[0]
+                        lines.append(f'Arrival: {time_part}')
+                    except:
+                        lines.append(f'Arrival: {arr_current}')
+            elif arr_current:
+                try:
+                    time_part = arr_current.split(' ')[1].split('+')[0]
+                    lines.append(f'Arrival: {time_part}')
+                except:
+                    lines.append(f'Arrival: {arr_current}')
+            
+            # Baggage belt
+            baggage = flight.get('arrival', {}).get('baggageBelt')
+            if baggage:
+                lines.append(f'Baggage: {baggage}')
+            
+            lines.append('')
+        
+        # Separator
+        lines.append('__________________')
+        
+        # Aircraft and airline info
+        aircraft = flight.get('aircraft')
+        if aircraft and isinstance(aircraft, dict):
+            aircraft_model = aircraft.get('model')
+            if aircraft_model:
+                lines.append(f'Aircraft: {aircraft_model}')
+        
+        airline = flight.get('airline')
+        if airline and isinstance(airline, dict):
+            airline_name = airline.get('name')
+            if airline_name:
+                lines.append(f'Airline: {airline_name}')
+        
+        return '\n'.join(lines).replace('\n\n\n', '\n\n').strip()
+        
+    except Exception as e:
+        logger.error(f"Error in formatTelegramMessage: {e}")
+        logger.error(f"Flight data structure: {flight}")
+        import traceback
+        logger.error(f"Full traceback: {traceback.format_exc()}")
+        return '⚠️ Error formatting flight data.' 

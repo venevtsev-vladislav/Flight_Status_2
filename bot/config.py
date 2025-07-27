@@ -167,8 +167,8 @@ BUTTON_LABELS = {
 
 # Callback data prefixes
 CALLBACK_PREFIXES = {
-    "refresh": "refresh:",
-    "subscribe": "subscribe:",
+    "refresh": "refresh",
+    "subscribe": "subscribe",
     "unsubscribe": "unsubscribe:",
     "new_search": "new_search",
     "my_flights": "my_flights",

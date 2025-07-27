@@ -1,5 +1,6 @@
   import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-  import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
 
   const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -67,15 +68,114 @@
         flight = newFlight
       }
 
-      // Save flight details
-      await supabase
-        .from('flight_details')
-        .upsert({
-          flight_id: flight.id,
-          data_source: 'mock_api',
-          raw_data: flightData,
-          last_checked_at: new Date().toISOString()
-        })
+      // Save flight details with UUID for each flight
+      const flightDetailsUUIDs: string[] = [];
+      
+      if (Array.isArray(flightData)) {
+        // Multiple flights
+        for (const flight of flightData) {
+          const dep = flight.departure || {};
+          const arr = flight.arrival || {};
+          const flight_number = (flight.number || '').replace(/\s/g, '');
+          const departure_date = dep.scheduledTime?.local ? dep.scheduledTime.local.split(' ')[0] : null;
+          const departure_time = dep.scheduledTime?.local ? dep.scheduledTime.local.split(' ')[1]?.slice(0,5) : null;
+          const departure_airport = dep.airport?.iata || null;
+          const arrival_airport = arr.airport?.iata || null;
+
+          // Check if record already exists
+          let { data: existingDetail } = await supabase
+            .from('flight_details')
+            .select('id')
+            .eq('flight_number', flight_number)
+            .eq('departure_date', departure_date)
+            .eq('departure_time', departure_time)
+            .eq('departure_airport', departure_airport)
+            .eq('arrival_airport', arrival_airport)
+            .single();
+
+          let uuid = existingDetail?.id;
+          if (!uuid) {
+            // Insert new record
+            const { data: newDetail } = await supabase
+              .from('flight_details')
+              .insert({
+                flight_id: flight.id,
+                flight_number,
+                departure_date,
+                departure_time,
+                departure_airport,
+                arrival_airport,
+                data_source: 'aerodatabox',
+                raw_data: flight,
+                last_checked_at: new Date().toISOString(),
+              })
+              .select('id')
+              .single();
+            uuid = newDetail?.id;
+          } else {
+            // Update existing record
+            await supabase
+              .from('flight_details')
+              .update({
+                raw_data: flight,
+                last_checked_at: new Date().toISOString(),
+              })
+              .eq('id', uuid);
+          }
+          if (uuid) flightDetailsUUIDs.push(uuid);
+        }
+      } else {
+        // Single flight
+        const dep = flightData.departure || {};
+        const arr = flightData.arrival || {};
+        const flight_number = (flightData.number || '').replace(/\s/g, '');
+        const departure_date = dep.scheduledTime?.local ? dep.scheduledTime.local.split(' ')[0] : null;
+        const departure_time = dep.scheduledTime?.local ? dep.scheduledTime.local.split(' ')[1]?.slice(0,5) : null;
+        const departure_airport = dep.airport?.iata || null;
+        const arrival_airport = arr.airport?.iata || null;
+
+        // Check if record already exists
+        let { data: existingDetail } = await supabase
+          .from('flight_details')
+          .select('id')
+          .eq('flight_number', flight_number)
+          .eq('departure_date', departure_date)
+          .eq('departure_time', departure_time)
+          .eq('departure_airport', departure_airport)
+          .eq('arrival_airport', arrival_airport)
+          .single();
+
+        let uuid = existingDetail?.id;
+        if (!uuid) {
+          // Insert new record
+          const { data: newDetail } = await supabase
+              .from('flight_details')
+              .insert({
+                flight_id: flight?.id || null,
+                flight_number,
+                departure_date,
+                departure_time,
+                departure_airport,
+                arrival_airport,
+                data_source: 'aerodatabox',
+                raw_data: flightData,
+                last_checked_at: new Date().toISOString(),
+              })
+              .select('id')
+              .single();
+          uuid = newDetail?.id;
+        } else {
+          // Update existing record
+          await supabase
+            .from('flight_details')
+            .update({
+              raw_data: flightData,
+              last_checked_at: new Date().toISOString(),
+            })
+            .eq('id', uuid);
+        }
+        if (uuid) flightDetailsUUIDs.push(uuid);
+      }
 
       // Log the API call
       if (user_id) {
@@ -136,8 +236,9 @@
         
         if (flightData.length === 1) {
           message = formatTelegramMessage(flightData[0]);
+          buttons = getDefaultButtons(); // Теперь buttons всегда массив массивов
         } else {
-          const result = formatMultipleFlights(flightData, date);
+          const result = formatMultipleFlights(flightData, date, flightDetailsUUIDs);
           message = result.message;
           buttons = result.buttons;
         }
@@ -147,12 +248,13 @@
         message = '⚠️ Sorry, could not find flight data.';
       }
       
+      // Всегда возвращаем поле buttons, даже если оно пустое
       return new Response(
         JSON.stringify({
           success: true,
           data: flightData,
           message,
-          buttons
+          buttons // массив массивов кнопок, каждая с уникальным callback_data
         }),
         { 
           status: 200, 
@@ -285,7 +387,7 @@
     }
   } 
 
-  function formatMultipleFlights(flights: any[], searchDate: string): { message: string, buttons: any[] } {
+  function formatMultipleFlights(flights: any[], searchDate: string, flightDetailsUUIDs?: string[]): { message: string, buttons: any[] } {
     if (!flights || flights.length === 0) {
       return {
         message: '⚠️ No flight data found.',
@@ -307,13 +409,30 @@
     });
 
     let buttons: any[] = [];
-    if (flights.length > 1) {
-      // Новые кнопки в формате: "09.07 | MMK→SVO | 6:50 PM"
+    if (flights.length > 1 && flightDetailsUUIDs && flightDetailsUUIDs.length > 0) {
+      // Кнопки выбора рейса с UUID для нескольких рейсов
       buttons = flights.map((flight, index) => {
-        return formatFlightButton(flight, index, searchDate);
-      });
+        const uuid = flightDetailsUUIDs[index];
+        if (!uuid) return null;
+        
+        const depScheduled = flight.departure?.scheduledTime?.local;
+        const arrScheduled = flight.arrival?.scheduledTime?.local;
+        const depDate = extractDateFromTime(depScheduled);
+        const arrDate = extractDateFromTime(arrScheduled);
+        const depIata = flight.departure?.airport?.iata || '';
+        const arrIata = flight.arrival?.airport?.iata || '';
+        const direction = `${depIata}→${arrIata}`;
+        const depTime = formatTimeAMPM(depScheduled);
+        const arrTime = formatTimeAMPM(arrScheduled);
+        const flightNumber = flight.number || 'UNKNOWN';
+
+        const buttonText = `🛫 ${formatDateShort(depDate)} | ${direction} | ${depTime}`;
+        const callbackData = `select_flight|${uuid}`;
+        
+        return [{ text: buttonText, callback_data: callbackData }];
+      }).filter(button => button !== null);
     } else {
-      // Обычные кнопки для одного рейса
+      // Стандартные кнопки действий для одного рейса
       buttons = getDefaultButtons();
     }
 
@@ -338,27 +457,34 @@
     let buttonText, callbackData;
     if (type === 'arrival') {
       buttonText = `🛬 ${formatDateShort(arrDate)} | ${direction} | ${arrTime}`;
-      callbackData = `select_flight|${flightNumber}|${arrDate}|${arrTime.slice(0,5)}|${depIata}|${arrIata}|arrival`;
+      callbackData = `select_flight|${flightNumber}|${arrDate}|${arrTime.slice(0,5)}|${depIata}|${arrIata}|arrival|${depDate}|${depTime.slice(0,5)}`;
     } else {
       buttonText = `🛫 ${formatDateShort(depDate)} | ${direction} | ${depTime}`;
-      callbackData = `select_flight|${flightNumber}|${depDate}|${depTime.slice(0,5)}|${depIata}|${arrIata}|departure`;
+      callbackData = `select_flight|${flightNumber}|${depDate}|${depTime.slice(0,5)}|${depIata}|${arrIata}|departure|${arrDate}|${arrTime.slice(0,5)}`;
     }
     return [{ text: buttonText, callback_data: callbackData }];
   }
 
   function formatTimeAMPM(dt: string | null): string {
     if (!dt) return '--:--';
+    
     try {
-      // Парсим локальное время из формата "2025-07-09 21:50+03:00"
-      const date = new Date(dt.replace(' ', 'T'));
-      let hours = date.getHours();
-      const minutes = date.getMinutes();
+      // Правильно парсим время из формата "2025-07-28 07:35+03:00"
+      // Извлекаем время напрямую из строки
+      const timeMatch = dt.match(/(\d{1,2}):(\d{2})/);
+      if (!timeMatch) {
+        return '--:--';
+      }
+      
+      let hours = parseInt(timeMatch[1], 10);
+      const minutes = parseInt(timeMatch[2], 10);
       const ampm = hours >= 12 ? 'PM' : 'AM';
       hours = hours % 12;
       hours = hours ? hours : 12;
       const minStr = minutes < 10 ? '0' + minutes : minutes;
       return `${hours}:${minStr} ${ampm}`;
-    } catch {
+    } catch (error) {
+      console.log('🔍 DEBUG: formatTimeAMPM error:', error, 'for input:', dt);
       return '--:--';
     }
   }
@@ -386,17 +512,33 @@
 
   function formatTime12(dt: string | null): string | null {
     if (!dt) return null;
+    
+    // Отладочный лог
+    console.log('🔍 DEBUG: formatTime12 input:', dt);
+    
     try {
-      // Правильно парсим локальное время из формата "2025-07-09 21:50+03:00"
-      const date = new Date(dt.replace(' ', 'T'));
-      let hours = date.getHours();
-      const minutes = date.getMinutes();
+      // Правильно парсим время из формата "2025-07-28 07:35+03:00"
+      // Извлекаем время напрямую из строки
+      const timeMatch = dt.match(/(\d{1,2}):(\d{2})/);
+      if (!timeMatch) {
+        console.log('🔍 DEBUG: No time pattern found in:', dt);
+        return dt;
+      }
+      
+      let hours = parseInt(timeMatch[1], 10);
+      const minutes = parseInt(timeMatch[2], 10);
       const ampm = hours >= 12 ? 'PM' : 'AM';
       hours = hours % 12;
       hours = hours ? hours : 12;
       const minStr = minutes < 10 ? '0' + minutes : minutes;
-      return `${hours}:${minStr} ${ampm}`;
-    } catch {
+      const result = `${hours}:${minStr} ${ampm}`;
+      
+      // Отладочный лог результата
+      console.log('🔍 DEBUG: formatTime12 output:', result, 'from input:', dt);
+      
+      return result;
+    } catch (error) {
+      console.log('🔍 DEBUG: formatTime12 error:', error, 'for input:', dt);
       return dt;
     }
   }
@@ -453,7 +595,7 @@
         // Вычисляем время посадки (обычно за 20 минут до вылета)
         const boardingTime = new Date(departureTime);
         boardingTime.setMinutes(boardingTime.getMinutes() - 20);
-        return { indicator: '🟠', message: formatTime12(boardingTime.toISOString()) };
+        return { indicator: '🟠', message: formatTime12(boardingTime.toLocaleString()) };
       }
       return { indicator: '🟠', message: null };
     }
@@ -465,7 +607,7 @@
         // Вычисляем время посадки (обычно за 20 минут до вылета)
         const boardingTime = new Date(departureTime);
         boardingTime.setMinutes(boardingTime.getMinutes() - 20);
-        return { indicator: '🟠', message: formatTime12(boardingTime.toISOString()) };
+        return { indicator: '🟠', message: formatTime12(boardingTime.toLocaleString()) };
       }
       return { indicator: '🟠', message: null };
     }
@@ -481,7 +623,7 @@
       // Вычисляем время посадки (обычно за 20 минут до вылета)
       const boardingTime = new Date(departureTime);
       boardingTime.setMinutes(boardingTime.getMinutes() - 20);
-      return { indicator: '🟠', message: formatTime12(boardingTime.toISOString()) };
+      return { indicator: '🟠', message: formatTime12(boardingTime.toLocaleString()) };
     }
     
     return { indicator: '🟠', message: null };
@@ -554,6 +696,24 @@
 
   function formatTelegramMessage(flight: any, flightIndex?: number): string {
     if (!flight) return '⚠️ No flight data.';
+    
+    // Отладочный лог для проверки времени
+    console.log('🔍 DEBUG: Flight departure times:', {
+      scheduled: flight.departure?.scheduledTime,
+      actual: flight.departure?.actualTime,
+      revised: flight.departure?.revisedTime
+    });
+    
+    // Детальный отладочный лог для времени вылета
+    console.log('🔍 DEBUG: Departure time details:', {
+      scheduled_utc: flight.departure?.scheduledTime?.utc,
+      scheduled_local: flight.departure?.scheduledTime?.local,
+      revised_utc: flight.departure?.revisedTime?.utc,
+      revised_local: flight.departure?.revisedTime?.local,
+      actual_utc: flight.departure?.actualTime?.utc,
+      actual_local: flight.departure?.actualTime?.local
+    });
+    
     const lines: string[] = [];
     
     const flightNumber = flight.number || '';
@@ -562,8 +722,6 @@
     const depName = flight.departure?.airport?.name;
     const arrName = flight.arrival?.airport?.name;
     const schedDep = flight.departure?.scheduledTime?.local;
-    const depTimeStr = schedDep ? formatTime12(schedDep) : '';
-    const depDateStr = schedDep ? formatDate(schedDep) : '';
     const status = flight.status || '';
     const statusIndicator = getStatusIndicator(status);
 
@@ -572,29 +730,25 @@
     if (depIata && arrIata) {
       header += ` ${depIata}→${arrIata}`;
     }
-    if (depTimeStr) {
-      header += ` ${depTimeStr}`;
-    }
-    if (depDateStr) {
-      header += ` (${depDateStr})`;
+    if (schedDep) {
+      header += ` ${formatTime12(schedDep)}`;
+      header += ` (${formatDate(schedDep)})`;
     }
     lines.push(header.trim());
 
     // Status line
     if (status) {
       lines.push(`${statusIndicator} Status: ${status}`);
-      lines.push(''); // пустая строка после статуса
+      lines.push('');
     }
 
-    // Codeshare line
+    // Codeshare line (only one, no duplicate)
     if (flight.codeshares && flight.codeshares.length > 0) {
       const codeshareList = flight.codeshares.join(', ');
       lines.push(`Also listed as: ${codeshareList}`);
       lines.push('');
-    }
-
-    // Codeshare note (when API returned different flight)
-    if (flight.codeshareNote) {
+    } else if (flight.codeshareNote) {
+      // Only show codeshareNote if codeshares is empty
       lines.push(`📋 ${flight.codeshareNote}`);
       lines.push('');
     }
@@ -616,59 +770,67 @@
           lines.push(`Gate: ${flight.departure.gate}`);
         }
       }
-      const depSched = flight.departure?.scheduledTime?.local;
+      // Time logic for departure
       const depActual = flight.departure?.actualTime?.local;
       const depRevised = flight.departure?.revisedTime?.local;
-      if (depActual && depSched && depActual !== depSched) {
-        lines.push(`Departure: ${formatTime12(depActual)} (was ${formatTime12(depSched)})`);
-      } else if (depRevised && depSched && depRevised !== depSched) {
-        lines.push(`Departure: ${formatTime12(depRevised)} (was ${formatTime12(depSched)})`);
-      } else if (depSched) {
-        lines.push(`Departure: ${formatTime12(depSched)}`);
+      const depScheduled = flight.departure?.scheduledTime?.local;
+      let depCurrent = depActual || depRevised || depScheduled;
+      let depLine = '';
+      
+      // Отладочный лог для времени вылета
+      console.log('🔍 DEBUG: Departure times:', {
+        actual: depActual,
+        revised: depRevised,
+        scheduled: depScheduled,
+        current: depCurrent,
+        formatted: depCurrent ? formatTime12(depCurrent) : null
+      });
+      
+      if (depCurrent && depScheduled && depCurrent !== depScheduled) {
+        depLine = `Departure: ${formatTime12(depCurrent)} (was ${formatTime12(depScheduled)})`;
+      } else if (depCurrent) {
+        depLine = `Departure: ${formatTime12(depCurrent)}`;
       }
-      lines.push(''); // пустая строка после departure
+      if (depLine) lines.push(depLine);
+      lines.push('');
     }
 
     // Arrival section
     if (arrIata || arrName) {
       lines.push(`🛬 ${arrIata || '--'} / ${arrName || ''}`.trim());
-      const arrSched = flight.arrival?.scheduledTime?.local;
       const arrActual = flight.arrival?.actualTime?.local;
       const arrRevised = flight.arrival?.revisedTime?.local;
-      const arrExpected = flight.arrival?.predictedTime?.local;
-      if (arrActual) {
-        if (arrSched && arrActual !== arrSched) {
-          lines.push(`Arrival: ${formatTime12(arrActual)} (was ${formatTime12(arrSched)})`);
-        } else {
-          lines.push(`Arrival: ${formatTime12(arrActual)}`);
-        }
-      } else if (arrRevised) {
-        if (arrSched && arrRevised !== arrSched) {
-          lines.push(`Arrival: ${formatTime12(arrRevised)} (was ${formatTime12(arrSched)})`);
-        } else {
-          lines.push(`Arrival: ${formatTime12(arrRevised)}`);
-        }
-      } else if (arrExpected) {
-        if (arrSched && arrExpected !== arrSched) {
-          lines.push(`Expected arrival: ${formatTime12(arrExpected)} (scheduled: ${formatTime12(arrSched)})`);
-        } else {
-          lines.push(`Expected arrival: ${formatTime12(arrExpected)}`);
-        }
-      } else if (arrSched) {
-        lines.push(`Arrival: ${formatTime12(arrSched)}`);
+      const arrPredicted = flight.arrival?.predictedTime?.local;
+      const arrScheduled = flight.arrival?.scheduledTime?.local;
+      let arrCurrent = arrActual || arrRevised || arrPredicted || arrScheduled;
+      let arrLine = '';
+      
+      // Отладочный лог для времени прилета
+      console.log('🔍 DEBUG: Arrival times:', {
+        actual: arrActual,
+        revised: arrRevised,
+        predicted: arrPredicted,
+        scheduled: arrScheduled,
+        current: arrCurrent,
+        formatted: arrCurrent ? formatTime12(arrCurrent) : null
+      });
+      
+      if (arrCurrent && arrScheduled && arrCurrent !== arrScheduled) {
+        arrLine = `Arrival: ${formatTime12(arrCurrent)} (was ${formatTime12(arrScheduled)})`;
+      } else if (arrCurrent) {
+        arrLine = `Arrival: ${formatTime12(arrCurrent)}`;
       }
+      if (arrLine) lines.push(arrLine);
       if (flight.arrival?.baggageBelt) {
         lines.push(`Baggage: ${flight.arrival.baggageBelt}`);
       }
-      lines.push(''); // пустая строка после arrival
+      lines.push('');
     }
 
-    // Разделитель (только если это не часть множественного списка)
     if (!flightIndex) {
       lines.push('__________________');
     }
 
-    // Aircraft and Airline
     if (flight.aircraft?.model) {
       lines.push(`Aircraft: ${flight.aircraft.model}`);
     }
