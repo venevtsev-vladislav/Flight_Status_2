@@ -476,13 +476,11 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
         return '--:--';
       }
       
-      let hours = parseInt(timeMatch[1], 10);
+      const hours = parseInt(timeMatch[1], 10);
       const minutes = parseInt(timeMatch[2], 10);
-      const ampm = hours >= 12 ? 'PM' : 'AM';
-      hours = hours % 12;
-      hours = hours ? hours : 12;
-      const minStr = minutes < 10 ? '0' + minutes : minutes;
-      return `${hours}:${minStr} ${ampm}`;
+      const hoursStr = hours < 10 ? '0' + hours : hours.toString();
+      const minStr = minutes < 10 ? '0' + minutes : minutes.toString();
+      return `${hoursStr}:${minStr}`;
     } catch (error) {
       console.log('🔍 DEBUG: formatTimeAMPM error:', error, 'for input:', dt);
       return '--:--';
@@ -525,13 +523,11 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
         return dt;
       }
       
-      let hours = parseInt(timeMatch[1], 10);
+      const hours = parseInt(timeMatch[1], 10);
       const minutes = parseInt(timeMatch[2], 10);
-      const ampm = hours >= 12 ? 'PM' : 'AM';
-      hours = hours % 12;
-      hours = hours ? hours : 12;
-      const minStr = minutes < 10 ? '0' + minutes : minutes;
-      const result = `${hours}:${minStr} ${ampm}`;
+      const hoursStr = hours < 10 ? '0' + hours : hours.toString();
+      const minStr = minutes < 10 ? '0' + minutes : minutes.toString();
+      const result = `${hoursStr}:${minStr}`;
       
       // Отладочный лог результата
       console.log('🔍 DEBUG: formatTime12 output:', result, 'from input:', dt);
@@ -547,14 +543,11 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
     if (!dt) return null;
     try {
       const date = new Date(dt.replace(' ', 'T'));
-      let hours = date.getHours();
+      const hours = date.getHours();
       const minutes = date.getMinutes();
-      const ampm = hours >= 12 ? 'PM' : 'AM';
-      hours = hours % 12;
-      hours = hours ? hours : 12;
-      const hh = hours < 10 ? '0' + hours : '' + hours;
-      const mm = minutes < 10 ? '0' + minutes : '' + minutes;
-      return `${hh}:${mm} ${ampm}`;
+      const hh = hours < 10 ? '0' + hours : hours.toString();
+      const mm = minutes < 10 ? '0' + minutes : minutes.toString();
+      return `${hh}:${mm}`;
     } catch {
       return dt;
     }
@@ -595,7 +588,7 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
         // Вычисляем время посадки (обычно за 20 минут до вылета)
         const boardingTime = new Date(departureTime);
         boardingTime.setMinutes(boardingTime.getMinutes() - 20);
-        return { indicator: '🟠', message: formatTime12(boardingTime.toLocaleString()) };
+        return { indicator: '🟠', message: formatTime12(boardingTime.toISOString()) };
       }
       return { indicator: '🟠', message: null };
     }
@@ -607,7 +600,7 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
         // Вычисляем время посадки (обычно за 20 минут до вылета)
         const boardingTime = new Date(departureTime);
         boardingTime.setMinutes(boardingTime.getMinutes() - 20);
-        return { indicator: '🟠', message: formatTime12(boardingTime.toLocaleString()) };
+        return { indicator: '🟠', message: formatTime12(boardingTime.toISOString()) };
       }
       return { indicator: '🟠', message: null };
     }
@@ -623,7 +616,7 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
       // Вычисляем время посадки (обычно за 20 минут до вылета)
       const boardingTime = new Date(departureTime);
       boardingTime.setMinutes(boardingTime.getMinutes() - 20);
-      return { indicator: '🟠', message: formatTime12(boardingTime.toLocaleString()) };
+      return { indicator: '🟠', message: formatTime12(boardingTime.toISOString()) };
     }
     
     return { indicator: '🟠', message: null };
