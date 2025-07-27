@@ -93,10 +93,13 @@ serve(async (req) => {
       flightDate = new Date().toISOString().split('T')[0]
     }
 
-    // Get all users subscribed to this flight
+    // Get all users subscribed to this flight with their telegram_id
     const { data: subscriptions, error: subError } = await supabase
       .from('flight_subscriptions')
-      .select('user_id, telegram_id')
+      .select(`
+        user_id,
+        users!inner(telegram_id)
+      `)
       .eq('flight_number', flightNumber)
       .eq('flight_date', flightDate)
       .eq('status', 'active')
@@ -134,6 +137,7 @@ serve(async (req) => {
 
     // Send notifications to all subscribed users
     const notificationPromises = subscriptions.map(async (sub) => {
+      const telegram_id = sub.users.telegram_id
       try {
         const response = await fetch(`https://api.telegram.org/bot${botToken}/sendMessage`, {
           method: 'POST',
@@ -141,7 +145,7 @@ serve(async (req) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            chat_id: sub.telegram_id,
+            chat_id: telegram_id,
             text: message,
             parse_mode: 'HTML'
           })
@@ -149,15 +153,15 @@ serve(async (req) => {
 
         if (!response.ok) {
           const errorData = await response.json()
-          console.error(`❌ Failed to send to user ${sub.telegram_id}:`, errorData)
-          return { success: false, user_id: sub.telegram_id, error: errorData }
+          console.error(`❌ Failed to send to user ${telegram_id}:`, errorData)
+          return { success: false, user_id: telegram_id, error: errorData }
         }
 
-        console.log(`✅ Notification sent to user ${sub.telegram_id}`)
-        return { success: true, user_id: sub.telegram_id }
+        console.log(`✅ Notification sent to user ${telegram_id}`)
+        return { success: true, user_id: telegram_id }
       } catch (error) {
-        console.error(`❌ Error sending to user ${sub.telegram_id}:`, error)
-        return { success: false, user_id: sub.telegram_id, error: error.message }
+        console.error(`❌ Error sending to user ${telegram_id}:`, error)
+        return { success: false, user_id: telegram_id, error: error.message }
       }
     })
 
