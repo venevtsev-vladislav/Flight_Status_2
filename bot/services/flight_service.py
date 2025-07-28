@@ -7,10 +7,13 @@ import re
 FLIGHT_NUMBER_REGEX = re.compile(r'([A-Z0-9]{2,3})\s?(\d{1,4}[A-Z]?)', re.IGNORECASE)
 
 def extract_flight_number(text):
-    match = FLIGHT_NUMBER_REGEX.search(text)
-    if match:
-        return match.group(0).replace(' ', '').upper()
-    return None
+    """Extract flight number from text - accept any format"""
+    # Remove extra whitespace and convert to uppercase
+    flight_number = text.strip().upper()
+    
+    # Return the cleaned text as flight number
+    # Let the API decide if it's valid
+    return flight_number if flight_number else None
 
 logger = logging.getLogger(__name__)
 

@@ -17,6 +17,7 @@ from aiogram.types import InlineKeyboardMarkup
 import logging
 import re
 import httpx
+from bot.handlers.fsm import SimpleFlightSearch
 
 WEBHOOK_URL = "https://taanbgxivbqcuaxcspjx.supabase.co/functions/v1/flight-webhook"
 
@@ -646,3 +647,141 @@ async def handle_select_flight(callback: CallbackQuery, db: DatabaseService,
             )
         except:
             pass  # Игнорируем ошибки audit log 
+
+@router.callback_query(F.data.startswith("simple_date:"))
+async def handle_simple_date_selection(callback: CallbackQuery, db: DatabaseService, 
+                                     flight_service: FlightService, typing_service: TypingService,
+                                     state: FSMContext):
+    """Handle simplified date selection"""
+    logger.info(f"🔍 DEBUG: Simple date selection callback triggered with data: {callback.data}")
+    try:
+        # Parse callback data: simple_date:DATE_TYPE
+        date_type = callback.data.replace("simple_date:", "")
+        
+        # Get user
+        user = await db.get_or_create_user(
+            telegram_id=callback.from_user.id,
+            username=callback.from_user.username
+        )
+        
+        if date_type == "custom":
+            # User wants to enter custom date
+            await state.set_state(SimpleFlightSearch.waiting_for_date)
+            await callback.message.edit_text(
+                "📝 **Введите дату в формате ДД.ММ.ГГГГ**\n\nНапример: 15.07.2025",
+                parse_mode="Markdown"
+            )
+            await callback.answer("Введите дату")
+            return
+        
+        # Convert date type to actual date
+        from datetime import datetime, timedelta
+        if date_type == "yesterday":
+            date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+            date_display = (datetime.now() - timedelta(days=1)).strftime('%d.%m.%Y')
+            date_text = "вчера"
+        elif date_type == "today":
+            date = datetime.now().strftime('%Y-%m-%d')
+            date_display = datetime.now().strftime('%d.%m.%Y')
+            date_text = "сегодня"
+        elif date_type == "tomorrow":
+            date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+            date_display = (datetime.now() + timedelta(days=1)).strftime('%d.%m.%Y')
+            date_text = "завтра"
+        else:
+            await callback.answer("❌ Неверный тип даты")
+            return
+        
+        # Store date in state and set state to waiting for flight number
+        await state.update_data(selected_date=date, selected_date_display=date_display)
+        await state.set_state(SimpleFlightSearch.waiting_for_flight_number)
+        
+        # Send message asking for flight number
+        text = f"✅ Дата: **{date_text}** ({date_display})\n\n**Шаг 2 - введите номер рейса**\n\nНапример: SU100, QR123, 5J944, SU1323A"
+        
+        # Create keyboard with change date button
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Изменить дату", callback_data="change_date")]
+        ])
+        
+        # Send new message and store its ID for later deletion
+        sent_message = await callback.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+        await state.update_data(instruction_message_id=sent_message.message_id)
+        
+        # Don't delete messages yet - wait until flight number is entered
+        await callback.answer(f"Выбрана дата: {date_text}")
+        
+        # Log the date selection
+        await db.log_audit(
+            user_id=user['id'],
+            action='simple_date_selected',
+            details={'date_type': date_type, 'date': date, 'date_display': date_display}
+        )
+        
+    except Exception as e:
+        logger.error(f"❌ Error in handle_simple_date_selection: {str(e)}")
+        await callback.answer("❌ Ошибка выбора даты")
+        await db.log_audit(
+            user_id=user['id'] if 'user' in locals() else None,
+            action='simple_date_selection_error',
+            details={'error': str(e), 'callback_data': callback.data}
+        )
+
+@router.callback_query(F.data.startswith("simple_flight_number:"))
+async def handle_simple_flight_number(callback: CallbackQuery, db: DatabaseService, 
+                                    flight_service: FlightService, typing_service: TypingService):
+    """Handle flight number from simplified flow"""
+    logger.info(f"🔍 DEBUG: Simple flight number callback triggered with data: {callback.data}")
+    try:
+        # Parse flight number from callback data
+        flight_number = callback.data.replace("simple_flight_number:", "")
+        
+        # Get user
+        user = await db.get_or_create_user(
+            telegram_id=callback.from_user.id,
+            username=callback.from_user.username
+        )
+        
+        # For now, we'll handle this in the text handler
+        # This is a placeholder for future implementation
+        
+        await callback.answer(f"Выбран рейс: {flight_number}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error in handle_simple_flight_number: {str(e)}")
+        await callback.answer("❌ Ошибка выбора рейса") 
+
+@router.callback_query(F.data == "change_date")
+async def handle_change_date(callback: CallbackQuery, state: FSMContext):
+    """Handle change date button - return to step 1"""
+    try:
+        # Clear current state and return to date selection
+        await state.clear()
+        
+        # Get user language (default to Russian)
+        lang = "ru"
+        
+        # Send new date selection message
+        from bot.handlers.start import get_simple_date_keyboard
+        keyboard = get_simple_date_keyboard(lang)
+        
+        text = "**Шаг 1 - укажите дату или выберите ниже**"
+        sent_message = await callback.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+        
+        # Store the new welcome message ID
+        await state.update_data(welcome_message_id=sent_message.message_id)
+        
+        # Delete the current instruction message
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logger.warning(f"Could not delete instruction message: {e}")
+        
+        await callback.answer("Выберите новую дату")
+        
+        logger.info(f"✅ Change date requested for user {callback.from_user.id}")
+        
+    except Exception as e:
+        logger.error(f"❌ ERROR in handle_change_date: {str(e)}")
+        await callback.answer("❌ Ошибка. Попробуйте еще раз.") 

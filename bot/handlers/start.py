@@ -1,129 +1,118 @@
 from aiogram import Router, F
 from aiogram.types import Message, FSInputFile, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from bot.services.database import DatabaseService
 from bot.services.language_service import LanguageService
 from bot.services.typing_service import TypingService
 from bot.config import MESSAGE_TEMPLATES, DEFAULT_LANGUAGE, BUTTON_LABELS
+from bot.handlers.fsm import SimpleFlightSearch
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = Router()
 
-def get_date_keyboard(lang="en"):
+def get_simple_date_keyboard(lang="en"):
+    """Simple date selection keyboard with yesterday/today/tomorrow only"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text=BUTTON_LABELS["yesterday"][lang], callback_data="date:yesterday"),
-            InlineKeyboardButton(text=BUTTON_LABELS["today"][lang], callback_data="date:today"),
-            InlineKeyboardButton(text=BUTTON_LABELS["tomorrow"][lang], callback_data="date:tomorrow"),
+            InlineKeyboardButton(text="Вчера", callback_data="simple_date:yesterday"),
+            InlineKeyboardButton(text="Сегодня", callback_data="simple_date:today"),
+            InlineKeyboardButton(text="Завтра", callback_data="simple_date:tomorrow"),
         ]
     ])
 
 @router.message(Command("start"))
-async def cmd_start(message: Message, db: DatabaseService, language_service: LanguageService, typing_service: TypingService):
-    """Handle /start command"""
+async def cmd_start(message: Message, db: DatabaseService, language_service: LanguageService, typing_service: TypingService, state: FSMContext):
+    """Handle /start command with simplified flow"""
     try:
+        # Check if we're already in a conversation
+        current_state = await state.get_state()
+        if current_state:
+            # If already in conversation, just answer and don't send new message
+            await message.answer("🔄 Уже идет поиск. Дождитесь завершения или начните заново с /search")
+            return
+        
         # Show typing indicator
         await typing_service.show_typing(message.chat.id, duration=2)
         
-        user_obj = message.from_user or type('User', (), {'id': 0, 'username': 'unknown', 'language_code': 'en', 'first_name': 'User'})()
-        # Detect user language
-        detected_language = language_service.detect_language(
-            user_language_code=getattr(user_obj, 'language_code', 'en'),
-            user_text=message.text
+        # Get user info
+        user = await db.get_or_create_user(message.from_user.id, message.from_user.username)
+        
+        # Get user language preference
+        lang = user.get('language_code', 'ru')
+        
+        # Simplified welcome message
+        welcome_text = "**Шаг 1 - укажите дату или выберите ниже**"
+        
+        # Send welcome message with date selection keyboard
+        keyboard = get_simple_date_keyboard(lang)
+        sent_message = await message.answer(welcome_text, reply_markup=keyboard, parse_mode="Markdown")
+        
+        # Store the welcome message ID and user's command message ID in state for later deletion
+        await state.update_data(
+            welcome_message_id=sent_message.message_id,
+            user_command_message_id=message.message_id
         )
         
-        # Get or create user with detected language
-        telegram_id = getattr(user_obj, 'id', 0) or 0
-        username = getattr(user_obj, 'username', 'unknown') or 'unknown'
-        user = await db.get_or_create_user(
-            telegram_id=telegram_id,
-            username=username,
-            language_code=detected_language
-        )
-        
-        # Get welcome message
-        lang = user.get('language_code', DEFAULT_LANGUAGE) if user else DEFAULT_LANGUAGE
-        from datetime import datetime
-        today_str = datetime.now().strftime('%d.%m.%Y')
-        welcome_template = MESSAGE_TEMPLATES["welcome"][lang]
-        if '{today}' in welcome_template:
-            welcome_text = welcome_template.format(
-                username=getattr(user_obj, 'first_name', 'User') or 'User',
-            today=today_str
-        )
-        else:
-            welcome_text = welcome_template.format(
-                username=getattr(user_obj, 'first_name', 'User') or 'User'
-            )
-        
-        # Send boarding pass image with caption and date keyboard
-        photo = FSInputFile('Example_Bording_pass.png')
-        keyboard = get_date_keyboard(lang)
-        await message.answer_photo(photo, caption=welcome_text, reply_markup=keyboard)
-        
-        # Log the start action
-        user_id = user['id'] if user and 'id' in user else 'unknown'
-        await db.log_audit(
-            user_id=user_id,
-            action='bot_start',
-            details={
-                'telegram_id': telegram_id,
-                'username': username,
-                'language_code': getattr(user_obj, 'language_code', 'en'),
-                'detected_language': detected_language
-            }
-        )
+        logger.info(f"✅ Start command handled for user {message.from_user.id}")
         
     except Exception as e:
-        # Fallback to English if translation fails
-        user_name = getattr(message.from_user, 'first_name', None) if message.from_user else "User"
-        welcome_text = MESSAGE_TEMPLATES["welcome"]["en"].format(
-            username=user_name or "User"
-        )
-        await message.answer(welcome_text) 
-
+        # Fallback to simple message
+        welcome_text = "**Шаг 1 - укажите дату или выберите ниже**"
+        keyboard = get_simple_date_keyboard("ru")
+        await message.answer(welcome_text, reply_markup=keyboard, parse_mode="Markdown")
+        logger.error(f"❌ ERROR in cmd_start: {str(e)}")
 
 @router.message(Command("search"))
-async def cmd_search(message: Message, db: DatabaseService, language_service: LanguageService, typing_service: TypingService):
-    """Handle /search command (short version)"""
+async def cmd_search(message: Message, db: DatabaseService, language_service: LanguageService, typing_service: TypingService, state: FSMContext):
+    """Handle /search command with simplified flow"""
     try:
+        # Check if we're already in a conversation
+        current_state = await state.get_state()
+        if current_state:
+            # If already in conversation, just answer and don't send new message
+            await message.answer("🔄 Уже идет поиск. Дождитесь завершения или начните заново с /start")
+            return
+        
         # Show typing indicator
-        await typing_service.show_typing(message.chat.id, duration=1)
-
-        user_obj = message.from_user or type('User', (), {'id': 0, 'username': 'unknown', 'language_code': 'en', 'first_name': 'User'})()
-        # Detect user language
-        detected_language = language_service.detect_language(
-            user_language_code=getattr(user_obj, 'language_code', 'en'),
-            user_text=message.text
+        await typing_service.show_typing(message.chat.id, duration=2)
+        
+        # Get user info
+        user = await db.get_or_create_user(message.from_user.id, message.from_user.username)
+        
+        # Get user language preference
+        lang = user.get('language_code', 'ru')
+        
+        # Get date selection keyboard
+        keyboard = get_simple_date_keyboard(lang)
+        
+        welcome_text = "**Шаг 1 - укажите дату или выберите ниже**"
+        sent_message = await message.answer(welcome_text, reply_markup=keyboard, parse_mode="Markdown")
+        
+        # Store the welcome message ID and user's command message ID in state for later deletion
+        await state.update_data(
+            welcome_message_id=sent_message.message_id,
+            user_command_message_id=message.message_id
         )
-
-        # Get or create user with detected language
-        telegram_id = getattr(user_obj, 'id', 0) or 0
-        username = getattr(user_obj, 'username', 'unknown') or 'unknown'
-        user = await db.get_or_create_user(
-            telegram_id=telegram_id,
-            username=username,
-            language_code=detected_language
-        )
-
-        lang = user.get('language_code', DEFAULT_LANGUAGE) if user else DEFAULT_LANGUAGE
-        keyboard = get_date_keyboard(lang)
-        await message.answer(
-            "Please enter the flight number and date (e.g. SU100, 2024-07-10):",
-            reply_markup=keyboard
-        )
-
-        # Log the search action
-        user_id = user['id'] if user and 'id' in user else 'unknown'
-        await db.log_audit(
-            user_id=user_id,
-            action='bot_search',
-            details={
-                'telegram_id': telegram_id,
-                'username': username,
-                'language_code': getattr(user_obj, 'language_code', 'en'),
-                'detected_language': detected_language
-            }
-        )
-
+        
+        logger.info(f"✅ Search command handled for user {message.from_user.id}")
+        
     except Exception as e:
-        await message.answer("Please enter the flight number and date (e.g. SU100, 2024-07-10):") 
+        welcome_text = "**Шаг 1 - укажите дату или выберите ниже**"
+        keyboard = get_simple_date_keyboard("ru")
+        await message.answer(welcome_text, reply_markup=keyboard, parse_mode="Markdown")
+        logger.error(f"❌ ERROR in cmd_search: {str(e)}") 
+
+@router.message(Command("reset"))
+async def cmd_reset(message: Message, state: FSMContext):
+    """Handle /reset command to clear conversation state"""
+    try:
+        await state.clear()
+        await message.answer("🔄 Состояние сброшено. Начните заново с /start")
+        logger.info(f"✅ Reset command handled for user {message.from_user.id}")
+    except Exception as e:
+        logger.error(f"❌ ERROR in cmd_reset: {str(e)}")
+        await message.answer("❌ Ошибка сброса состояния") 

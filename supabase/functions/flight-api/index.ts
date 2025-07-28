@@ -313,6 +313,15 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
 
       if (!response.ok) {
         console.error(`AeroDataBox API error: ${response.status} ${response.statusText}`)
+        
+        // Check if it's a 404 (no data found) vs other errors
+        if (response.status === 404) {
+          return {
+            error: 'no_data',
+            message: 'Рейс не найден на указанную дату'
+          }
+        }
+        
         return {
           error: 'api_error',
           message: `API error: ${response.status}`
@@ -327,7 +336,7 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
       if (!data || (Array.isArray(data) && data.length === 0)) {
         return {
           error: 'no_data',
-          message: 'No flight data found for this date'
+          message: 'Рейс не найден на указанную дату'
         }
       }
 
@@ -588,7 +597,10 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
         // Вычисляем время посадки (обычно за 20 минут до вылета)
         const boardingTime = new Date(departureTime);
         boardingTime.setMinutes(boardingTime.getMinutes() - 20);
-        return { indicator: '🟠', message: formatTime12(boardingTime.toISOString()) };
+        const hours = boardingTime.getHours();
+        const minutes = boardingTime.getMinutes();
+        const timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+        return { indicator: '🟠', message: timeStr };
       }
       return { indicator: '🟠', message: null };
     }
@@ -600,7 +612,10 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
         // Вычисляем время посадки (обычно за 20 минут до вылета)
         const boardingTime = new Date(departureTime);
         boardingTime.setMinutes(boardingTime.getMinutes() - 20);
-        return { indicator: '🟠', message: formatTime12(boardingTime.toISOString()) };
+        const hours = boardingTime.getHours();
+        const minutes = boardingTime.getMinutes();
+        const timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+        return { indicator: '🟠', message: timeStr };
       }
       return { indicator: '🟠', message: null };
     }
@@ -616,7 +631,10 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
       // Вычисляем время посадки (обычно за 20 минут до вылета)
       const boardingTime = new Date(departureTime);
       boardingTime.setMinutes(boardingTime.getMinutes() - 20);
-      return { indicator: '🟠', message: formatTime12(boardingTime.toISOString()) };
+      const hours = boardingTime.getHours();
+      const minutes = boardingTime.getMinutes();
+      const timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`;
+      return { indicator: '🟠', message: timeStr };
     }
     
     return { indicator: '🟠', message: null };
