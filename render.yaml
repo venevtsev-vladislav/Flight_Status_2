@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: flight-status-bot
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: AERODATABOX_API_KEY
+        sync: false
+      - key: AMPLITUDE_API_KEY
+        sync: false
+      - key: AMPLITUDE_SECRET_KEY
+        sync: false
+      - key: AMPLITUDE_PROJECT_ID
+        sync: false 

@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  flight-status-bot:
+    build: .
+    container_name: flight-status-bot
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - AERODATABOX_API_KEY=${AERODATABOX_API_KEY}
+      - AMPLITUDE_API_KEY=${AMPLITUDE_API_KEY}
+      - AMPLITUDE_SECRET_KEY=${AMPLITUDE_SECRET_KEY}
+      - AMPLITUDE_PROJECT_ID=${AMPLITUDE_PROJECT_ID}
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge 

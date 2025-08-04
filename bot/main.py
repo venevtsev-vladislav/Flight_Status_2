@@ -10,7 +10,6 @@ from bot.services.flight_service import FlightService
 from bot.services.language_service import LanguageService
 from bot.services.typing_service import TypingService
 from bot.services.search_service import SearchService
-from bot.handlers import start, text, callbacks
 
 # Configure logging
 logging.basicConfig(
@@ -46,6 +45,7 @@ async def main():
         dp["search_service"] = search_service
         
         # Include routers
+        from bot.handlers import start, text, callbacks
         dp.include_router(start.router)
         dp.include_router(text.router)
         dp.include_router(callbacks.router)

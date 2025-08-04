@@ -89,12 +89,12 @@ def get_user_flights_keyboard(subscriptions: List[Dict[str, Any]], lang: str = "
     # Add action buttons
     buttons.append([
         InlineKeyboardButton(
-            text="🔍 Новый поиск",
-            callback_data=CALLBACK_PREFIXES["new_search"]
-        ),
-        InlineKeyboardButton(
             text="🔄 Обновить",
             callback_data=CALLBACK_PREFIXES["my_flights"]
+        ),
+        InlineKeyboardButton(
+            text="🔍 Новый поиск",
+            callback_data=CALLBACK_PREFIXES["new_search"]
         )
     ])
     

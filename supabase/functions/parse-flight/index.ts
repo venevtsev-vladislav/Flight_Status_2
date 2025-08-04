@@ -98,10 +98,10 @@ function parseFlightRequest(text: string): ParseResponse {
     /\b([a-z]{2,3})(\d{1,5})\b/i      // AA8242, SU100
   ]
   
-  // Enhanced date patterns with multi-language support
-  const todayPattern = /\b(today|сегодня|сегодня|today)\b/i
-  const tomorrowPattern = /\b(tomorrow|завтра|завтра|tomorrow)\b/i
-  const yesterdayPattern = /\b(yesterday|вчера|вчера|yesterday)\b/i
+  // Enhanced date patterns (English only)
+  const todayPattern = /\b(today)\b/i
+  const tomorrowPattern = /\b(tomorrow)\b/i
+  const yesterdayPattern = /\b(yesterday)\b/i
   const datePatterns = [
     /\b(\d{1,2})[\.,\/\-](\d{1,2})[\.,\/\-](\d{2,4})\b/,  // DD.MM.YYYY, DD/MM/YYYY, DD-MM-YYYY, DD,MM,YYYY
     /\b(\d{4})[\.,\/\-](\d{1,2})[\.,\/\-](\d{1,2})\b/,    // YYYY.MM.DD, YYYY/MM/DD, YYYY-MM-DD, YYYY,MM,DD

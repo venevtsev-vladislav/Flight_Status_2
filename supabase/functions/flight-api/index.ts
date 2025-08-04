@@ -275,10 +275,14 @@ import { v4 as uuidv4 } from "https://deno.land/std@0.168.0/uuid/mod.ts"
 
   function getDefaultButtons() {
     return [
-      [{ text: '🔄 Refresh', callback_data: 'refresh' }],
-      [{ text: '🔔 Subscribe', callback_data: 'subscribe' }],
-      [{ text: '🔍 New search', callback_data: 'new_search' }],
-      [{ text: '🗂 My flights', callback_data: 'my_flights' }]
+      [
+        { text: '🔄 Refresh', callback_data: 'refresh' },
+        { text: '🔔 Subscribe', callback_data: 'subscribe' }
+      ],
+      [
+        { text: '🔍 New search', callback_data: 'new_search' },
+        { text: '🗂 My flights', callback_data: 'my_flights' }
+      ]
     ];
   }
 

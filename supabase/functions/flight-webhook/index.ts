@@ -232,25 +232,25 @@ function formatFlightNotification(flight: any): string {
 
   // Base message
   let message = `<b>${flightNumber}: ${status} ${emoji}</b>\n`
-  message += `Обновлено: ${lastUpdated}\n\n`
+  message += `Updated: ${lastUpdated}\n\n`
 
   // Add specific details based on status
   switch (status) {
     case 'Boarding':
       if (flight.departure?.gate) {
-        message += `Выход: ${flight.departure.gate}\n`
+        message += `Gate: ${flight.departure.gate}\n`
       }
       if (flight.departure?.terminal) {
-        message += `Терминал: ${flight.departure.terminal}\n`
+        message += `Terminal: ${flight.departure.terminal}\n`
       }
       break
 
     case 'CheckIn':
       if (flight.departure?.gate) {
-        message += `Выход: ${flight.departure.gate}\n`
+        message += `Gate: ${flight.departure.gate}\n`
       }
       if (flight.departure?.terminal) {
-        message += `Терминал: ${flight.departure.terminal}\n`
+        message += `Terminal: ${flight.departure.terminal}\n`
       }
       break
 
@@ -261,15 +261,15 @@ function formatFlightNotification(flight: any): string {
           hour: '2-digit',
           minute: '2-digit'
         })
-        message += `Вылетел в ${actualTime}\n`
+        message += `Departed at ${actualTime}\n`
       }
       if (flight.arrival?.scheduledTimeUtc) {
-        const arrivalTime = new Date(flight.arrival.scheduledTimeUtc).toLocaleString('ru-RU', {
+        const arrivalTime = new Date(flight.arrival.scheduledTimeUtc).toLocaleString('en-US', {
           timeZone: 'Europe/Moscow',
           hour: '2-digit',
           minute: '2-digit'
         })
-        message += `Прибытие: ${arrivalTime}\n`
+        message += `Arrival: ${arrivalTime}\n`
       }
       break
 
@@ -280,16 +280,16 @@ function formatFlightNotification(flight: any): string {
           hour: '2-digit',
           minute: '2-digit'
         })
-        message += `Прибыл в ${actualTime}\n`
+        message += `Arrived at ${actualTime}\n`
       }
       if (flight.arrival?.gate) {
-        message += `Выход: ${flight.arrival.gate}\n`
+        message += `Gate: ${flight.arrival.gate}\n`
       }
       if (flight.arrival?.terminal) {
-        message += `Терминал: ${flight.arrival.terminal}\n`
+        message += `Terminal: ${flight.arrival.terminal}\n`
       }
       if (flight.arrival?.baggageBelt) {
-        message += `Лента багажа: ${flight.arrival.baggageBelt}\n`
+        message += `Baggage belt: ${flight.arrival.baggageBelt}\n`
       }
       break
 
@@ -298,8 +298,8 @@ function formatFlightNotification(flight: any): string {
         const scheduled = new Date(flight.departure.scheduledTimeUtc)
         const actual = new Date(flight.departure.actualTimeUtc)
         const delayMinutes = Math.round((actual.getTime() - scheduled.getTime()) / (1000 * 60))
-        message += `Задержка: ${delayMinutes} минут\n`
-        message += `Новое время: ${actual.toLocaleString('ru-RU', {
+        message += `Delay: ${delayMinutes} minutes\n`
+        message += `New time: ${actual.toLocaleString('en-US', {
           timeZone: 'Europe/Moscow',
           hour: '2-digit',
           minute: '2-digit'
@@ -320,23 +320,23 @@ function formatFlightNotification(flight: any): string {
           hour: '2-digit',
           minute: '2-digit'
         })
-        message += `Прибытие: ${arrivalTime}\n`
+        message += `Arrival: ${arrivalTime}\n`
       }
       if (flight.arrival?.gate) {
-        message += `Выход: ${flight.arrival.gate}\n`
+        message += `Gate: ${flight.arrival.gate}\n`
       }
       if (flight.arrival?.terminal) {
-        message += `Терминал: ${flight.arrival.terminal}\n`
+        message += `Terminal: ${flight.arrival.terminal}\n`
       }
       break
 
     default:
-      // Для других статусов показываем доступную информацию
+      // For other statuses show available information
       if (flight.departure?.gate) {
-        message += `Выход: ${flight.departure.gate}\n`
+        message += `Gate: ${flight.departure.gate}\n`
       }
       if (flight.departure?.terminal) {
-        message += `Терминал: ${flight.departure.terminal}\n`
+        message += `Terminal: ${flight.departure.terminal}\n`
       }
       if (flight.arrival?.baggageBelt) {
         message += `Лента багажа: ${flight.arrival.baggageBelt}\n`

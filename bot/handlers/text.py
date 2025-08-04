@@ -51,7 +51,7 @@ async def handle_text_message(message: Message, state: FSMContext, db: DatabaseS
             if is_date_format(date_input):
                 await handle_simple_date_input(message, date_input, user, db, flight_service, typing_service, state)
             else:
-                await message.answer("❌ Неверный формат даты. Используйте формат ДД.ММ.ГГГГ")
+                await message.answer("❌ Invalid date format. Use DD.MM.YYYY format")
             return
         
         elif current_state == SimpleFlightSearch.waiting_for_flight_number:
@@ -60,7 +60,7 @@ async def handle_text_message(message: Message, state: FSMContext, db: DatabaseS
             if flight_number:
                 await handle_simple_flight_number_input(message, flight_number, user, db, flight_service, typing_service, state)
             else:
-                await message.answer("❌ Введите номер рейса")
+                await message.answer("❌ Please enter flight number")
             return
         
         # If no state, try to detect what user wants
@@ -81,7 +81,7 @@ async def handle_text_message(message: Message, state: FSMContext, db: DatabaseS
             
     except Exception as e:
         logger.error(f"❌ Error in simplified text handler: {str(e)}")
-        await message.answer("❌ Произошла ошибка. Попробуйте еще раз.")
+        await message.answer("❌ An error occurred. Please try again.")
 
 def is_date_format(text: str) -> bool:
     """Check if text matches DD.MM.YYYY format"""
@@ -113,12 +113,12 @@ async def handle_simple_date_input(message: Message, date_input: str, user: dict
         # Set state to waiting for flight number
         await state.set_state(SimpleFlightSearch.waiting_for_flight_number)
         
-        text = f"✅ Дата: **{date_display}**\n\n**Шаг 2 - введите номер рейса**\n\nНапример: SU100, QR123, 5J944, SU1323A"
+        text = f"✅ Date: **{date_display}**\n\n**Step 2 - enter flight number**\n\nExamples: SU100, QR123, 5J944, SU1323A"
         
         # Create keyboard with change date button
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Изменить дату", callback_data="change_date")]
+            [InlineKeyboardButton(text="Change date", callback_data="change_date")]
         ])
         
         # Send message and store its ID for later deletion
@@ -130,10 +130,10 @@ async def handle_simple_date_input(message: Message, date_input: str, user: dict
         logger.info(f"✅ Date input handled: {date_display} for user {message.from_user.id}")
         
     except ValueError:
-        await message.answer("❌ Неверный формат даты. Используйте формат ДД.ММ.ГГГГ\n\nНапример: 15.07.2025")
+        await message.answer("❌ Invalid date format. Use DD.MM.YYYY format\n\nExample: 15.07.2025")
     except Exception as e:
         logger.error(f"❌ ERROR in handle_simple_date_input: {str(e)}")
-        await message.answer("❌ Ошибка обработки даты. Попробуйте еще раз.")
+        await message.answer("❌ Error processing date. Please try again.")
 
 async def handle_simple_flight_number_input(message: Message, flight_number: str, user: dict,
                                           db: DatabaseService, flight_service: FlightService,
@@ -156,24 +156,30 @@ async def handle_simple_flight_number_input(message: Message, flight_number: str
             selected_date_display = today_display
         
         # Show that we're searching
-        search_text = f"🔍 Ищу рейс **{flight_number}** на **{selected_date_display}**..."
-        await message.answer(search_text, parse_mode="Markdown")
+        search_text = f"🔍 Searching for flight **{flight_number}** on **{selected_date_display}**..."
+        search_message = await message.answer(search_text, parse_mode="Markdown")
         
         # Get flight data
         flight_data = await flight_service.get_flight_data(flight_number, selected_date, user['id'])
         
         if not flight_data or (isinstance(flight_data, dict) and flight_data.get('error')):
+            # Delete search message first
+            try:
+                await search_message.delete()
+            except Exception as e:
+                logger.warning(f"Could not delete search message: {e}")
+            
             # Handle different types of errors
             if isinstance(flight_data, dict):
                 error_type = flight_data.get('data', {}).get('error') if flight_data.get('data') else flight_data.get('error')
                 if error_type == 'no_data':
-                    error_message = "❌ Рейс не найден на указанную дату. Проверьте номер рейса и дату."
+                    error_message = "❌ Flight not found for the specified date. Check flight number and date."
                 elif error_type == 'api_error':
-                    error_message = "🚦 Повышенный спрос, попробуйте позже."
+                    error_message = "🚦 High demand, please try later."
                 else:
-                    error_message = "❌ Ошибка поиска рейса. Попробуйте еще раз."
+                    error_message = "❌ Flight search error. Please try again."
             else:
-                error_message = "❌ Рейс не найден или произошла ошибка при поиске."
+                error_message = "❌ Flight not found or search error occurred."
             
             await message.answer(error_message)
             await state.clear()
@@ -204,6 +210,9 @@ async def handle_simple_flight_number_input(message: Message, flight_number: str
         
         # NOW delete all previous messages
         try:
+            # Delete search message
+            await search_message.delete()
+            
             # Delete user's flight number input
             await message.delete()
             
@@ -229,23 +238,30 @@ async def handle_simple_flight_number_input(message: Message, flight_number: str
         
     except Exception as e:
         logger.error(f"❌ ERROR in handle_number_input_with_search: {str(e)}")
-        await message.answer("❌ Ошибка поиска рейса. Попробуйте еще раз.")
+        # Try to delete search message if it exists
+        try:
+            if 'search_message' in locals():
+                await search_message.delete()
+        except Exception as delete_error:
+            logger.warning(f"Could not delete search message: {delete_error}")
+        
+        await message.answer("❌ Flight search error. Please try again.")
         # Clear state on error
         await state.clear()
 
 async def handle_unknown_input(message: Message, user: dict):
     """Handle unknown input in simplified flow"""
-    text = """❓ Не понимаю ваш запрос.
+    text = """❓ I don't understand your request.
 
-**Для поиска рейса:**
+**To search for a flight:**
 
-1️⃣ **Укажите дату** одним из способов:
-   • Выберите кнопку (вчера/сегодня/завтра)
-   • Введите дату в формате ДД.ММ.ГГГГ (например: 15.07.2025)
+1️⃣ **Enter date** in one of the following ways:
+   • Select a button (yesterday/today/tomorrow)
+   • Enter date in DD.MM.YYYY format (example: 15.07.2025)
 
-2️⃣ **Введите номер рейса** (например: SU100, QR123, 5J944)
+2️⃣ **Enter flight number** (example: SU100, QR123, 5J944)
 
-**Примеры дат:**
+**Date examples:**
 • 15.07.2025
 • 30.07.2025
 • 01.08.2025"""
@@ -279,7 +295,7 @@ def format_single_flight(flight: dict, date_display: str) -> str:
 
 def format_multiple_flights(flights: list, date_display: str) -> str:
     """Format multiple flights result"""
-    result = f"Найдено {len(flights)} рейсов на {date_display}:\n\n"
+    result = f"Found {len(flights)} flights on {date_display}:\n\n"
     for i, flight in enumerate(flights[:5], 1):  # Limit to 5 flights
         flight_number = flight.get('number', 'Unknown')
         departure = flight.get('departure', {})
@@ -304,7 +320,7 @@ def get_flight_selection_buttons(flights: list):
     for i, flight in enumerate(flights[:5], 1):  # Limit to 5 flights
         flight_number = flight.get('number', 'Unknown')
         keyboard.append([InlineKeyboardButton(
-            text=f"Рейс {i}: {flight_number}",
+            text=f"Flight {i}: {flight_number}",
             callback_data=f"select_flight_{i}"
         )])
     
@@ -315,8 +331,10 @@ def get_default_buttons():
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     
     keyboard = [
-        [InlineKeyboardButton(text="🔄 Обновить", callback_data="refresh")],
-        [InlineKeyboardButton(text="🔍 Новый поиск", callback_data="new_search")]
+        [
+            InlineKeyboardButton(text="🔄 Refresh", callback_data="refresh"),
+            InlineKeyboardButton(text="🔍 New search", callback_data="new_search")
+        ]
     ]
     
     return InlineKeyboardMarkup(inline_keyboard=keyboard)

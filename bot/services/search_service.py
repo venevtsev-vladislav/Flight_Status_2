@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from supabase import create_client, Client
@@ -23,6 +24,7 @@ class SearchService:
         parsed_data: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Create or update active search for user"""
+        start_time = time.time()
         try:
             # Clean up expired searches first
             await self._cleanup_expired_searches()
@@ -49,14 +51,16 @@ class SearchService:
                 on_conflict='telegram_id'
             ).execute()
             
+            response_time = time.time() - start_time
+            
             if result.data:
                 logger.info(f"✅ Search state updated for user {telegram_id}: {search_state}")
                 return result.data[0]
             else:
                 logger.error(f"❌ Failed to update search state for user {telegram_id}")
                 return {}
-                
         except Exception as e:
+            response_time = time.time() - start_time
             logger.error(f"❌ Error updating search state: {e}")
             return {}
     

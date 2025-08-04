@@ -22,7 +22,7 @@ from bot.handlers.fsm import SimpleFlightSearch
 WEBHOOK_URL = "https://taanbgxivbqcuaxcspjx.supabase.co/functions/v1/flight-webhook"
 
 async def create_subscription_via_supabase(user_id: str, flight_number: str, date: str, callback_url: str) -> dict:
-    """Создает подписку через Supabase endpoint"""
+    """Creates subscription via Supabase endpoint"""
     try:
         logger.info(f"🔍 DEBUG: Starting create_subscription_via_supabase")
         logger.info(f"🔍 DEBUG: user_id={user_id}, flight_number={flight_number}, date={date}")
@@ -83,6 +83,7 @@ async def handle_refresh_flight(callback: CallbackQuery, db: DatabaseService,
                               flight_service: FlightService, typing_service: TypingService):
     """Handle refresh flight button"""
     logger.info(f"🔍 DEBUG: Refresh callback triggered with data: {callback.data}")
+    
     try:
         # Get user
         user = await db.get_or_create_user(
@@ -93,7 +94,7 @@ async def handle_refresh_flight(callback: CallbackQuery, db: DatabaseService,
         # Безопасно получаем текст сообщения
         message_text = getattr(callback.message, 'text', None)
         if not message_text:
-            await callback.answer("❌ Нет текста сообщения для обновления рейса")
+            await callback.answer("❌ No message text for flight update")
             return
         logger.info(f"🔍 DEBUG: Refreshing flight data from message: {message_text}")
         
@@ -161,9 +162,9 @@ async def handle_refresh_flight(callback: CallbackQuery, db: DatabaseService,
 @router.callback_query(F.data.startswith(CALLBACK_PREFIXES["subscribe"]))
 async def handle_subscribe_flight(callback: CallbackQuery, db: DatabaseService, 
                                 flight_service: FlightService, typing_service: TypingService):
-    logger.info(f"🔍 DEBUG: Subscribe callback triggered with data: {callback.data}")
     """Handle subscribe to flight button"""
     logger.info(f"🔍 DEBUG: Subscribe callback triggered with data: {callback.data}")
+    
     try:
         # Get user
         user = await db.get_or_create_user(
@@ -174,7 +175,7 @@ async def handle_subscribe_flight(callback: CallbackQuery, db: DatabaseService,
         # Безопасно получаем текст сообщения
         message_text = getattr(callback.message, 'text', None)
         if not message_text:
-            await callback.answer("❌ Нет текста сообщения для парсинга рейса")
+            await callback.answer("❌ No message text for flight parsing")
             return
         logger.info(f"🔍 DEBUG: Subscribing to flight from message: {message_text}")
         
@@ -231,14 +232,14 @@ async def handle_subscribe_flight(callback: CallbackQuery, db: DatabaseService,
             if not webhook_result.get('success', False):
                 error_message = webhook_result.get('message', 'Unknown error')
                 logger.error(f"❌ Webhook creation failed: {error_message}")
-                await callback.answer(f"❌ Ошибка создания подписки: {error_message}")
+                await callback.answer(f"❌ Error creating subscription: {error_message}")
                 return
             
             subscription_id = webhook_result.get('subscription_id')
             logger.info(f"🔍 DEBUG: Supabase subscriptionId: {subscription_id}")
         except Exception as e:
             logger.error(f"❌ Error creating Supabase webhook: {e}")
-            await callback.answer("❌ Не удалось создать подписку на рейс (Supabase)")
+            await callback.answer("❌ Failed to create flight subscription (Supabase)")
             return
         
         # 2. Сохраняем подписку в Supabase
@@ -267,7 +268,7 @@ async def handle_subscribe_flight(callback: CallbackQuery, db: DatabaseService,
                 }
             )
             # Отправляем короткое сообщение пользователю
-            await callback.message.answer(f"✅ Подписка на рейс {flight_number} {date_str} успешно создана!")
+            await callback.message.answer(f"✅ Subscription to flight {flight_number} {date_str} successfully created!")
             
             # Обновляем клавиатуру (кнопка должна стать 'Отписаться')
             from bot.keyboards.inline_keyboards import get_flight_card_keyboard
@@ -304,13 +305,13 @@ async def handle_details(callback: CallbackQuery, db: DatabaseService, flight_se
         # Получаем flight из БД
         flight = await db.get_flight_by_id(flight_id)
         if not flight:
-            await callback.answer("Рейс не найден")
+            await callback.answer("Flight not found")
             return
         flight_number = flight.get('flight_number')
         date = flight.get('date')
         # Получаем подробную информацию
         flight_data = await flight_service.get_flight_data(flight_number, date, user['id'])
-        text = flight_data.get('message', 'Нет данных')
+        text = flight_data.get('message', 'No data')
         # Кнопки как при обычном поиске
         from bot.keyboards.inline_keyboards import get_flight_card_keyboard
         # Проверяем подписку по flight_number и date
@@ -322,7 +323,7 @@ async def handle_details(callback: CallbackQuery, db: DatabaseService, flight_se
         await callback.answer()
     except Exception as e:
         logger.error(f"❌ Error in handle_details: {e}")
-        await callback.answer("Ошибка при получении подробной информации")
+        await callback.answer("Error getting detailed information")
 
 @router.callback_query(F.data.startswith(CALLBACK_PREFIXES["unsubscribe"]))
 async def handle_unsubscribe_flight(callback: CallbackQuery, db: DatabaseService):
@@ -339,7 +340,7 @@ async def handle_unsubscribe_flight(callback: CallbackQuery, db: DatabaseService
         # Получаем подписку из БД
         subscription = await db.get_subscription_by_id(subscription_id)
         if not subscription or subscription['user_id'] != user['id']:
-            await callback.answer("❌ Подписка не найдена")
+            await callback.answer("❌ Subscription not found")
             return
             
         flight_number = subscription.get('flight_number', '')
@@ -349,16 +350,16 @@ async def handle_unsubscribe_flight(callback: CallbackQuery, db: DatabaseService
         success = await db.unsubscribe_from_flight(user['id'], subscription_id)
         if success:
             # Сообщение об успешной отписке
-            await callback.message.answer(f"✅ Вы успешно отписались от рейса {flight_number} {flight_date}")
+            await callback.message.answer(f"✅ You have successfully unsubscribed from flight {flight_number} {flight_date}")
             # Кнопки 'Найти новый рейс' и 'Мои рейсы'
             from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🔍 Новый поиск", callback_data=CALLBACK_PREFIXES["new_search"])],
-                [InlineKeyboardButton(text="🗂 Мои рейсы", callback_data=CALLBACK_PREFIXES["my_flights"])]
+                [InlineKeyboardButton(text="🔍 New search", callback_data=CALLBACK_PREFIXES["new_search"])],
+                [InlineKeyboardButton(text="🗂 My flights", callback_data=CALLBACK_PREFIXES["my_flights"])]
             ])
-            await callback.message.answer("Выберите действие:", reply_markup=keyboard)
+            await callback.message.answer("Choose an action:", reply_markup=keyboard)
         else:
-            await callback.message.answer("❌ Ошибка при отписке от рейса")
+            await callback.message.answer("❌ Error unsubscribing from flight")
             
         await callback.answer()
     except Exception as e:
@@ -374,6 +375,7 @@ async def handle_unsubscribe_flight(callback: CallbackQuery, db: DatabaseService
 async def handle_new_search(callback: CallbackQuery, db: DatabaseService):
     """Handle new search button"""
     logger.info(f"🔍 DEBUG: New search callback triggered with data: {callback.data}")
+    
     try:
         # Get user
         user = await db.get_or_create_user(
@@ -401,6 +403,7 @@ async def handle_new_search(callback: CallbackQuery, db: DatabaseService):
 async def handle_my_flights(callback: CallbackQuery, db: DatabaseService):
     """Handle my flights button"""
     logger.info(f"🔍 DEBUG: My flights callback triggered with data: {callback.data}")
+    
     try:
         # Get user
         user = await db.get_or_create_user(
@@ -412,11 +415,11 @@ async def handle_my_flights(callback: CallbackQuery, db: DatabaseService):
         subscriptions = await db.get_user_subscriptions(user['id'])
         
         if not subscriptions:
-            text = "🗂 У вас пока нет подписок на рейсы.\n\nНайдите рейс и нажмите кнопку '🔔 Subscribe' чтобы получать уведомления об изменениях."
+            text = "🗂 You don't have any flight subscriptions yet.\n\nFind a flight and click the '🔔 Subscribe' button to receive notifications about changes."
             await callback.message.answer(text)
         else:
             # Create message with subscription count
-            text = f"🗂 Ваши подписки на рейсы ({len(subscriptions)}):\n\nВыберите рейс для просмотра актуальной информации:"
+            text = f"🗂 Your flight subscriptions ({len(subscriptions)}):\n\nSelect a flight to view current information:"
             
             # Create keyboard with user's flights
             keyboard = get_user_flights_keyboard(subscriptions, user.get('language_code', DEFAULT_LANGUAGE))
@@ -559,7 +562,7 @@ async def handle_date_selection(callback: CallbackQuery, db: DatabaseService,
         await callback.answer(f"Selected date: {date_text}")
         
         # Send message with example format
-        text = f"Вы выбрали дату: {date_text} ({date_display})\n\nТеперь введите номер рейса:"
+        text = f"You selected date: {date_text} ({date_display})\n\nNow enter the flight number:"
         await callback.message.answer(text, parse_mode="Markdown")
         
     except Exception as e:
@@ -612,7 +615,7 @@ async def handle_select_flight(callback: CallbackQuery, db: DatabaseService,
             # Проверяем, что flight_data не None и является словарем
             if not flight_data or not isinstance(flight_data, dict):
                 logger.error(f"❌ Invalid flight_data: {type(flight_data)} - {flight_data}")
-                text = "⚠️ Ошибка: неверные данные рейса"
+                text = "⚠️ Error: invalid flight data"
             else:
                 text = formatTelegramMessage(flight_data)
                 logger.info(f"🔍 DEBUG: Generated text: {text[:200]}...")
@@ -627,10 +630,10 @@ async def handle_select_flight(callback: CallbackQuery, db: DatabaseService,
         # Отправляем новое сообщение с одним рейсом
         try:
             await callback.message.answer(text, reply_markup=keyboard)
-            await callback.answer("✅ Выбран рейс")
+            await callback.answer("✅ Flight selected")
         except Exception as send_error:
             logger.error(f"❌ Error sending message: {send_error}")
-            await callback.answer("❌ Ошибка отправки сообщения")
+            await callback.answer("❌ Error sending message")
         
     except Exception as e:
         await callback.answer("Error processing flight selection")
@@ -654,6 +657,7 @@ async def handle_simple_date_selection(callback: CallbackQuery, db: DatabaseServ
                                      state: FSMContext):
     """Handle simplified date selection"""
     logger.info(f"🔍 DEBUG: Simple date selection callback triggered with data: {callback.data}")
+    
     try:
         # Parse callback data: simple_date:DATE_TYPE
         date_type = callback.data.replace("simple_date:", "")
@@ -668,10 +672,10 @@ async def handle_simple_date_selection(callback: CallbackQuery, db: DatabaseServ
             # User wants to enter custom date
             await state.set_state(SimpleFlightSearch.waiting_for_date)
             await callback.message.edit_text(
-                "📝 **Введите дату в формате ДД.ММ.ГГГГ**\n\nНапример: 15.07.2025",
+                "📝 **Enter date in DD.MM.YYYY format**\n\nExample: 15.07.2025",
                 parse_mode="Markdown"
             )
-            await callback.answer("Введите дату")
+            await callback.answer("Enter date")
             return
         
         # Convert date type to actual date
@@ -679,17 +683,17 @@ async def handle_simple_date_selection(callback: CallbackQuery, db: DatabaseServ
         if date_type == "yesterday":
             date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
             date_display = (datetime.now() - timedelta(days=1)).strftime('%d.%m.%Y')
-            date_text = "вчера"
+            date_text = "yesterday"
         elif date_type == "today":
             date = datetime.now().strftime('%Y-%m-%d')
             date_display = datetime.now().strftime('%d.%m.%Y')
-            date_text = "сегодня"
+            date_text = "today"
         elif date_type == "tomorrow":
             date = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
             date_display = (datetime.now() + timedelta(days=1)).strftime('%d.%m.%Y')
-            date_text = "завтра"
+            date_text = "tomorrow"
         else:
-            await callback.answer("❌ Неверный тип даты")
+            await callback.answer("❌ Invalid date type")
             return
         
         # Store date in state and set state to waiting for flight number
@@ -697,12 +701,12 @@ async def handle_simple_date_selection(callback: CallbackQuery, db: DatabaseServ
         await state.set_state(SimpleFlightSearch.waiting_for_flight_number)
         
         # Send message asking for flight number
-        text = f"✅ Дата: **{date_text}** ({date_display})\n\n**Шаг 2 - введите номер рейса**\n\nНапример: SU100, QR123, 5J944, SU1323A"
+        text = f"✅ Date: **{date_text}** ({date_display})\n\n**Step 2 - enter flight number**\n\nExamples: SU100, QR123, 5J944, SU1323A"
         
         # Create keyboard with change date button
         from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Изменить дату", callback_data="change_date")]
+            [InlineKeyboardButton(text="Change date", callback_data="change_date")]
         ])
         
         # Send new message and store its ID for later deletion
@@ -710,7 +714,7 @@ async def handle_simple_date_selection(callback: CallbackQuery, db: DatabaseServ
         await state.update_data(instruction_message_id=sent_message.message_id)
         
         # Don't delete messages yet - wait until flight number is entered
-        await callback.answer(f"Выбрана дата: {date_text}")
+        await callback.answer(f"Date selected: {date_text}")
         
         # Log the date selection
         await db.log_audit(
@@ -721,7 +725,7 @@ async def handle_simple_date_selection(callback: CallbackQuery, db: DatabaseServ
         
     except Exception as e:
         logger.error(f"❌ Error in handle_simple_date_selection: {str(e)}")
-        await callback.answer("❌ Ошибка выбора даты")
+        await callback.answer("❌ Error selecting date")
         await db.log_audit(
             user_id=user['id'] if 'user' in locals() else None,
             action='simple_date_selection_error',
@@ -746,11 +750,11 @@ async def handle_simple_flight_number(callback: CallbackQuery, db: DatabaseServi
         # For now, we'll handle this in the text handler
         # This is a placeholder for future implementation
         
-        await callback.answer(f"Выбран рейс: {flight_number}")
+        await callback.answer(f"Flight selected: {flight_number}")
         
     except Exception as e:
         logger.error(f"❌ Error in handle_simple_flight_number: {str(e)}")
-        await callback.answer("❌ Ошибка выбора рейса") 
+        await callback.answer("❌ Error selecting flight") 
 
 @router.callback_query(F.data == "change_date")
 async def handle_change_date(callback: CallbackQuery, state: FSMContext):
@@ -766,7 +770,7 @@ async def handle_change_date(callback: CallbackQuery, state: FSMContext):
         from bot.handlers.start import get_simple_date_keyboard
         keyboard = get_simple_date_keyboard(lang)
         
-        text = "**Шаг 1 - укажите дату или выберите ниже**"
+        text = "**Step 1 - enter date or select below**"
         sent_message = await callback.message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
         
         # Store the new welcome message ID
@@ -778,10 +782,10 @@ async def handle_change_date(callback: CallbackQuery, state: FSMContext):
         except Exception as e:
             logger.warning(f"Could not delete instruction message: {e}")
         
-        await callback.answer("Выберите новую дату")
+        await callback.answer("Select new date")
         
         logger.info(f"✅ Change date requested for user {callback.from_user.id}")
         
     except Exception as e:
         logger.error(f"❌ ERROR in handle_change_date: {str(e)}")
-        await callback.answer("❌ Ошибка. Попробуйте еще раз.") 
+        await callback.answer("❌ Error. Please try again.") 
